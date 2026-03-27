@@ -1,0 +1,31 @@
+{
+  "name": "@snapense/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@snapense/shared": "*",
+    "archiver": "^7.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.1.0",
+    "openai": "^6.32.0",
+    "unpdf": "^1.4.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
