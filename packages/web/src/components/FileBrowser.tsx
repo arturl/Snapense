@@ -77,8 +77,6 @@ export function FileBrowser() {
     setProgressPct(0);
     setProgressText(`Starting... 0 of ${total}`);
 
-    // Fake incremental progress while waiting for the server
-    // (server processes all at once, so we simulate per-file ticks)
     let tick = 0;
     const interval = setInterval(() => {
       tick = Math.min(tick + 1, total - 1);
@@ -125,38 +123,36 @@ export function FileBrowser() {
 
   return (
     <div style={{ display: "flex", gap: 16, minHeight: "calc(100vh - 100px)" }}>
-      {/* LEFT PANE — File browser */}
+      {/* LEFT PANE */}
       <div style={{ flex: "1 1 55%", minWidth: 0 }}>
         <div style={card}>
           {/* Breadcrumbs */}
           <nav style={{ marginBottom: 12, fontSize: 13 }}>
             {breadcrumbs.map((bc, i) => (
               <span key={i}>
-                {i > 0 && <span style={{ margin: "0 5px", color: "#aaa" }}>/</span>}
+                {i > 0 && <span style={{ margin: "0 4px", color: "#8b949e" }}>/</span>}
                 {i < breadcrumbs.length - 1 ? (
                   <a
                     href="#"
                     onClick={(e) => { e.preventDefault(); navigateToBreadcrumb(i); }}
-                    style={{ color: "#0078d4", textDecoration: "none" }}
+                    style={{ color: "#0969da", textDecoration: "none" }}
                   >
                     {bc.name}
                   </a>
                 ) : (
-                  <span style={{ fontWeight: 600 }}>{bc.name}</span>
+                  <span style={{ fontWeight: 600, color: "#1f2328" }}>{bc.name}</span>
                 )}
               </span>
             ))}
           </nav>
 
-          {error && (
-            <div style={errorBox}>{error}</div>
-          )}
+          {error && <div style={errorBox}>{error}</div>}
 
-          {/* Actions bar */}
+          {/* Actions */}
           <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center" }}>
-            <button onClick={selectAll} style={smallBtn}>Select all</button>
-            <button onClick={selectNone} style={smallBtn}>Clear</button>
-            <span style={{ color: "#888", fontSize: 12, marginLeft: 4 }}>
+            <button onClick={selectAll} style={secondaryBtn}>Select all</button>
+            <button onClick={selectNone} style={secondaryBtn}>Clear</button>
+            <span style={{ color: "#656d76", fontSize: 12, marginLeft: 4 }}>
               {selected.size} selected
             </span>
             <div style={{ flex: 1 }} />
@@ -164,80 +160,77 @@ export function FileBrowser() {
               onClick={processSelected}
               disabled={selected.size === 0 || processing}
               style={{
-                ...smallBtn,
-                background: selected.size > 0 && !processing ? "#0078d4" : "#c0c0c0",
-                color: "#fff", border: "none", padding: "7px 18px", fontWeight: 600,
+                ...primaryBtn,
+                opacity: selected.size === 0 || processing ? 0.5 : 1,
+                cursor: selected.size === 0 || processing ? "default" : "pointer",
               }}
             >
               {processing ? "Processing..." : "Process Receipts"}
             </button>
           </div>
 
-          {/* File list */}
+          {/* File table */}
           {loading ? (
-            <div style={{ padding: 20, textAlign: "center", color: "#888" }}>Loading files...</div>
+            <div style={{ padding: 24, textAlign: "center", color: "#656d76" }}>Loading files...</div>
           ) : (
             <div style={{ maxHeight: "calc(100vh - 240px)", overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ borderBottom: "2px solid #eee", textAlign: "left", color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    <th style={{ width: 28, padding: "6px 8px" }}></th>
-                    <th style={{ padding: "6px 8px" }}>Name</th>
-                    <th style={{ padding: "6px 8px", width: 80 }}>Size</th>
-                    <th style={{ padding: "6px 8px", width: 90 }}>Created</th>
+                  <tr style={{ borderBottom: "1px solid #d1d9e0" }}>
+                    <th style={{ ...th, width: 28 }}></th>
+                    <th style={th}>Name</th>
+                    <th style={{ ...th, width: 80 }}>Size</th>
+                    <th style={{ ...th, width: 100 }}>Created</th>
                   </tr>
                 </thead>
                 <tbody>
                   {folderItems.map((item) => (
                     <tr
                       key={item.id}
-                      style={{ borderBottom: "1px solid #f0f0f0", cursor: "pointer" }}
+                      style={row}
                       onClick={() => navigateToFolder(item)}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8f9fb")}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f6f8fa")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}
                     >
-                      <td style={{ padding: "6px 8px" }}></td>
-                      <td style={{ padding: "6px 8px", color: "#0078d4", fontWeight: 500 }}>
-                        <span style={{ marginRight: 6 }}>&#128193;</span>{item.name}
+                      <td style={td}></td>
+                      <td style={{ ...td, color: "#0969da", fontWeight: 500, cursor: "pointer" }}>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="#54aeff" style={{ verticalAlign: "text-bottom", marginRight: 6 }}>
+                          <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
+                        </svg>
+                        {item.name}
                       </td>
-                      <td style={{ padding: "6px 8px", color: "#aaa", fontSize: 12 }}>
-                        {item.folder?.childCount} items
-                      </td>
-                      <td style={{ padding: "6px 8px", color: "#aaa", fontSize: 12 }}>
-                        {new Date(item.createdDateTime).toLocaleDateString()}
-                      </td>
+                      <td style={{ ...td, color: "#656d76" }}>{item.folder?.childCount} items</td>
+                      <td style={{ ...td, color: "#656d76" }}>{fmtDate(item.createdDateTime)}</td>
                     </tr>
                   ))}
                   {fileItems.map((item) => (
                     <tr
                       key={item.id}
-                      style={{
-                        borderBottom: "1px solid #f0f0f0",
-                        background: selected.has(item.id) ? "#e8f2fc" : undefined,
-                      }}
-                      onMouseEnter={(e) => { if (!selected.has(item.id)) e.currentTarget.style.background = "#f8f9fb"; }}
+                      style={{ ...row, background: selected.has(item.id) ? "#ddf4ff" : undefined }}
+                      onMouseEnter={(e) => { if (!selected.has(item.id)) e.currentTarget.style.background = "#f6f8fa"; }}
                       onMouseLeave={(e) => { if (!selected.has(item.id)) e.currentTarget.style.background = ""; }}
                     >
-                      <td style={{ padding: "6px 8px" }}>
+                      <td style={td}>
                         <input
                           type="checkbox"
                           checked={selected.has(item.id)}
                           onChange={() => toggleSelect(item.id)}
-                          style={{ accentColor: "#0078d4" }}
+                          style={{ accentColor: "#0969da" }}
                         />
                       </td>
-                      <td style={{ padding: "6px 8px" }}>{item.name}</td>
-                      <td style={{ padding: "6px 8px", color: "#aaa", fontSize: 12 }}>
-                        {item.size ? formatSize(item.size) : "—"}
+                      <td style={{ ...td, color: "#1f2328" }}>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="#656d76" style={{ verticalAlign: "text-bottom", marginRight: 6 }}>
+                          <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/>
+                        </svg>
+                        {item.name}
                       </td>
-                      <td style={{ padding: "6px 8px", color: "#aaa", fontSize: 12 }}>
-                        {new Date(item.createdDateTime).toLocaleDateString()}
-                      </td>
+                      <td style={{ ...td, color: "#656d76" }}>{item.size ? fmtSize(item.size) : ""}</td>
+                      <td style={{ ...td, color: "#656d76" }}>{fmtDate(item.createdDateTime)}</td>
                     </tr>
                   ))}
                   {items.length === 0 && (
                     <tr>
-                      <td colSpan={4} style={{ padding: 20, textAlign: "center", color: "#aaa" }}>
+                      <td colSpan={4} style={{ padding: 24, textAlign: "center", color: "#8b949e" }}>
                         This folder is empty
                       </td>
                     </tr>
@@ -249,32 +242,30 @@ export function FileBrowser() {
         </div>
       </div>
 
-      {/* RIGHT PANE — Progress + Results */}
+      {/* RIGHT PANE */}
       <div style={{ flex: "1 1 45%", minWidth: 0 }}>
         <div style={card}>
-          <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 600, color: "#333" }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 600, color: "#1f2328" }}>
             Processed Receipts
           </h3>
 
           {!results && !processing && (
-            <div style={{ padding: "40px 20px", textAlign: "center", color: "#aaa", fontSize: 13 }}>
-              Select files on the left and click "Process Receipts" to get started.
+            <div style={{ padding: "40px 16px", textAlign: "center", color: "#8b949e", fontSize: 13, lineHeight: 1.6 }}>
+              Select files on the left and click<br />"Process Receipts" to get started.
             </div>
           )}
 
-          {/* Progress bar */}
+          {/* Progress */}
           {(processing || progressPct > 0) && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>{progressText}</div>
-              <div style={{ height: 6, background: "#e8e8e8", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ fontSize: 12, color: "#656d76", marginBottom: 6 }}>{progressText}</div>
+              <div style={{ height: 8, background: "#eaeef2", borderRadius: 4, overflow: "hidden" }}>
                 <div
                   style={{
                     height: "100%",
                     width: `${progressPct}%`,
-                    background: progressPct === 100
-                      ? "linear-gradient(90deg, #107c10, #1a9e1a)"
-                      : "linear-gradient(90deg, #0078d4, #3aa0f0)",
-                    borderRadius: 3,
+                    background: "#0969da",
+                    borderRadius: 4,
                     transition: "width 0.4s ease",
                   }}
                 />
@@ -282,36 +273,31 @@ export function FileBrowser() {
             </div>
           )}
 
-          {/* Results list */}
+          {/* Results */}
           {results && (
             <>
               <div style={{ maxHeight: "calc(100vh - 320px)", overflowY: "auto" }}>
                 {results.map((r, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 6,
-                      marginBottom: 6,
-                      background: r.status === "success" ? "#f0f9f0" : "#fef0f0",
-                      border: `1px solid ${r.status === "success" ? "#c8e6c8" : "#f5c6c6"}`,
-                    }}
-                  >
-                    <div style={{ fontSize: 12, color: "#888", marginBottom: 2 }}>
+                  <div key={i} style={{
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    marginBottom: 6,
+                    border: `1px solid ${r.status === "success" ? "#d1d9e0" : "#ffcecb"}`,
+                    background: r.status === "success" ? "#ffffff" : "#ffebe9",
+                  }}>
+                    <div style={{ fontSize: 12, color: "#656d76", marginBottom: 2 }}>
                       {r.originalName}
                     </div>
                     <div style={{
-                      fontSize: 13,
-                      fontFamily: "'Cascadia Code', 'Fira Code', monospace",
-                      fontWeight: 500,
-                      color: r.status === "success" ? "#1a6e1a" : "#c00",
+                      fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace",
+                      fontWeight: 500, color: r.status === "success" ? "#1f2328" : "#a40e26",
                       wordBreak: "break-all",
                     }}>
                       {r.status === "success" ? r.newName : r.error}
                     </div>
-                    {r.status === "success" && (
-                      <div style={{ fontSize: 11, color: "#888", marginTop: 3 }}>
-                        {r.ocr.merchant} &middot; {r.ocr.date} &middot; ${r.ocr.total} {r.ocr.currency}
+                    {r.status === "success" && (r.ocr as any).summary && (
+                      <div style={{ fontSize: 12, color: "#656d76", marginTop: 4, lineHeight: 1.4 }}>
+                        {(r.ocr as any).summary}
                       </div>
                     )}
                   </div>
@@ -331,50 +317,84 @@ export function FileBrowser() {
   );
 }
 
-function formatSize(bytes: number): string {
+function fmtSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/* ---- GitHub-style tokens ---- */
+
 const card: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 10,
+  background: "#ffffff",
+  borderRadius: 6,
   padding: 16,
-  boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-  border: "1px solid #e8eaed",
+  border: "1px solid #d1d9e0",
 };
 
-const smallBtn: React.CSSProperties = {
-  padding: "5px 10px",
-  border: "1px solid #d8dce0",
+const th: React.CSSProperties = {
+  padding: "8px 8px",
+  textAlign: "left",
+  fontSize: 12,
+  fontWeight: 600,
+  color: "#1f2328",
+};
+
+const td: React.CSSProperties = {
+  padding: "6px 8px",
+  fontSize: 13,
+};
+
+const row: React.CSSProperties = {
+  borderBottom: "1px solid #eaeef2",
+  cursor: "default",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  padding: "5px 12px",
+  border: "1px solid #d1d9e0",
   borderRadius: 6,
-  background: "#fff",
+  background: "#f6f8fa",
   cursor: "pointer",
   fontSize: 12,
-  color: "#444",
+  fontWeight: 500,
+  color: "#1f2328",
+};
+
+const primaryBtn: React.CSSProperties = {
+  padding: "6px 16px",
+  border: "1px solid rgba(27,31,36,0.15)",
+  borderRadius: 6,
+  background: "#0969da",
+  color: "#fff",
+  fontSize: 13,
+  fontWeight: 600,
 };
 
 const errorBox: React.CSSProperties = {
-  background: "#fef0f0",
-  border: "1px solid #f5c6c6",
+  background: "#ffebe9",
+  border: "1px solid #ffcecb",
   padding: 10,
   borderRadius: 6,
   marginBottom: 12,
-  color: "#b00",
+  color: "#a40e26",
   fontSize: 13,
 };
 
 const downloadBtn: React.CSSProperties = {
   marginTop: 12,
-  padding: "9px 20px",
-  background: "linear-gradient(135deg, #107c10, #1a9e1a)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 8,
+  padding: "8px 16px",
+  background: "#f6f8fa",
+  color: "#1f2328",
+  border: "1px solid #d1d9e0",
+  borderRadius: 6,
   cursor: "pointer",
   fontSize: 13,
-  fontWeight: 600,
-  boxShadow: "0 2px 6px rgba(16,124,16,0.25)",
+  fontWeight: 500,
   width: "100%",
 };

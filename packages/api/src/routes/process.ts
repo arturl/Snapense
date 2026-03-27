@@ -64,6 +64,7 @@ router.post("/api/process", requireAuth, async (req: Request, res: Response) => 
             total: "0.00",
             currency: "USD",
             description: "unknown",
+            summary: "",
           };
         }
 
@@ -92,6 +93,7 @@ router.post("/api/process", requireAuth, async (req: Request, res: Response) => 
             total: "0.00",
             currency: "USD",
             description: "unknown",
+            summary: "",
           },
           status: "error",
           error: err.message,

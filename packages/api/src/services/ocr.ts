@@ -25,10 +25,16 @@ const SYSTEM_PROMPT = `You are a receipt OCR assistant. Extract the following fr
 3. total: The total amount as a number string (e.g. "42.12"). Use the final total including tax.
 4. currency: The currency code (default "USD")
 5. description: A short (1-3 word) business expense category (e.g. "Breakfast", "Lunch", "Dinner", "Meal", "Airport-Parking", "Taxi", "Office-Supplies", "Hotel"). Use general meal categories (Breakfast/Lunch/Dinner/Meal) for restaurants — never list specific food or drink items.
+6. summary: A brief human-readable description of the expense with useful details extracted from the receipt. Examples:
+   - Hotel: "Hotel stay, 2 nights Mar 23-25, room 3122, paid by Amex"
+   - Restaurant: "Dinner for 2, Terminal 3 O'Hare, paid by Visa"
+   - Parking: "Airport parking, 4 days, Lot B"
+   - Taxi: "Ride from downtown to O'Hare, 22 miles"
+   Include dates, location details, duration, payment method, or other context when available. Keep it to one line.
 
-Use hyphens instead of spaces in merchant and description fields. Do not use apostrophes or special characters.
+Use hyphens instead of spaces in merchant and description fields. Do not use apostrophes or special characters in merchant or description.
 Respond ONLY with valid JSON matching this schema:
-{"merchant":"string","date":"string","total":"string","currency":"string","description":"string"}`;
+{"merchant":"string","date":"string","total":"string","currency":"string","description":"string","summary":"string"}`;
 
 function parseOcrResponse(text: string): OcrResult {
   const jsonStr = text.replace(/^```json?\s*/, "").replace(/\s*```$/, "");
@@ -40,6 +46,7 @@ function parseOcrResponse(text: string): OcrResult {
       total: parsed.total || "0.00",
       currency: parsed.currency || "USD",
       description: parsed.description || "unknown",
+      summary: parsed.summary || "",
     };
   } catch {
     console.error("[OCR] Failed to parse response:", text);
@@ -49,6 +56,7 @@ function parseOcrResponse(text: string): OcrResult {
       total: "0.00",
       currency: "USD",
       description: "unknown",
+      summary: "",
     };
   }
 }
@@ -107,6 +115,7 @@ export async function extractReceiptFromPdf(
       total: "0.00",
       currency: "USD",
       description: "unknown",
+      summary: "",
     };
   }
 

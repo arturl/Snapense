@@ -20,6 +20,7 @@ export interface OcrResult {
   total: string; // e.g. "42.12"
   currency: string; // e.g. "USD"
   description: string; // short description of purchase type
+  summary: string; // human-readable detail line
 }
 
 export interface ProcessedFile {
