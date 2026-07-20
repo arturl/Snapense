@@ -58,7 +58,9 @@ function validDraft(draft: CollegeExpenseDraft): boolean {
     draft?.id && draft.sourceFileId && draft.status === "success" &&
     /^\d{4}-\d{2}-\d{2}$/.test(draft.date) &&
     draft.merchant.trim() && draft.description.trim() &&
-    Number.isFinite(Number(draft.amount)) && Number(draft.amount) >= 0
+    /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
+    Array.isArray(draft.items) && draft.items.some((item) => item.trim()) &&
+    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0
   );
 }
 

@@ -39,6 +39,7 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
   useEffect(() => { loadFolder(currentFolderId); }, [currentFolderId, loadFolder]);
 
   const successfulDrafts = useMemo(() => drafts.filter((draft) => draft.status === "success"), [drafts]);
+  const reviewComplete = successfulDrafts.length > 0 && successfulDrafts.every(isDraftComplete);
 
   if (!plan) return <div style={card}><h2 style={{ marginTop: 0 }}>Set up a 529 plan</h2><p style={muted}>Add a beneficiary and choose a OneDrive destination folder before scanning receipts.</p><button style={primaryBtn} onClick={onOpenSettings}>Open Settings</button></div>;
 
@@ -147,7 +148,10 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
           <button style={{ ...primaryBtn, width: "100%", opacity: allResolved && !busy ? 1 : .5 }} disabled={!allResolved || busy} onClick={() => submit()}>{busy ? "Saving…" : "Apply decisions and submit"}</button>
         </div>}
 
-        {!duplicates.length && <button style={{ ...primaryBtn, width: "100%", opacity: successfulDrafts.length && !busy ? 1 : .5 }} disabled={!successfulDrafts.length || busy} onClick={() => submit({})}>{busy ? "Saving…" : `Submit ${successfulDrafts.length} reviewed expense${successfulDrafts.length === 1 ? "" : "s"}`}</button>}
+        {!duplicates.length && <>
+          {!reviewComplete && successfulDrafts.length > 0 && <div style={{ color: "#9a6700", fontSize: 12, margin: "8px 0" }}>Complete the highlighted fields before submitting.</div>}
+          <button style={{ ...primaryBtn, width: "100%", opacity: reviewComplete && !busy ? 1 : .5 }} disabled={!reviewComplete || busy} onClick={() => submit({})}>{busy ? "Saving…" : `Submit ${successfulDrafts.length} reviewed expense${successfulDrafts.length === 1 ? "" : "s"}`}</button>
+        </>}
       </div>}
     </div>
   </div>;
@@ -156,18 +160,37 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
 function DraftEditor({ draft, onChange, onRemove }: { draft: CollegeExpenseDraft; onChange: (changes: Partial<CollegeExpenseDraft>) => void; onRemove: () => void }) {
   const extension = draft.originalName.includes(".") ? draft.originalName.slice(draft.originalName.lastIndexOf(".")) : "";
   const proposed = formatCollegeExpenseFilename(draft) + extension;
+  const missingDate = !/^\d{4}-\d{2}-\d{2}$/.test(draft.date);
+  const missingMerchant = !draft.merchant.trim();
+  const missingAmount = !Number.isFinite(Number(draft.amount)) || Number(draft.amount) <= 0;
+  const missingCurrency = !/^[A-Za-z]{3}$/.test(draft.currency.trim());
+  const missingItems = !draft.items.some((item) => item.trim());
+  const missingDescription = !draft.description.trim();
   return <div style={draftBox}>
     <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}><strong style={{ fontSize: 13 }}>{draft.originalName}</strong><span style={{ flex: 1 }} /><button style={smallLink} onClick={onRemove}>Remove</button></div>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 110px 80px", gap: 9 }}>
-      <Field label="Date"><input required type="date" style={input} value={draft.date} onChange={(event) => onChange({ date: event.target.value })} /></Field>
-      <Field label="Merchant"><input required style={input} value={draft.merchant} onChange={(event) => onChange({ merchant: event.target.value })} /></Field>
-      <Field label="Amount"><input required min="0" step="0.01" type="number" style={input} value={draft.amount} onChange={(event) => onChange({ amount: event.target.value })} /></Field>
-      <Field label="Currency"><input required maxLength={3} style={input} value={draft.currency} onChange={(event) => onChange({ currency: event.target.value.toUpperCase() })} /></Field>
+      <Field label="Date"><input required type="date" style={fieldStyle(missingDate)} value={draft.date} onChange={(event) => onChange({ date: event.target.value })} /></Field>
+      <Field label="Merchant"><input required style={fieldStyle(missingMerchant)} value={draft.merchant} onChange={(event) => onChange({ merchant: event.target.value })} /></Field>
+      <Field label="Amount"><input required min="0.01" step="0.01" type="number" style={fieldStyle(missingAmount)} value={draft.amount} onChange={(event) => onChange({ amount: event.target.value })} /></Field>
+      <Field label="Currency"><input required maxLength={3} style={fieldStyle(missingCurrency)} value={draft.currency} onChange={(event) => onChange({ currency: event.target.value.toUpperCase() })} /></Field>
     </div>
-    <Field label="Items purchased (comma-separated)"><input style={input} value={draft.items.join(", ")} onChange={(event) => onChange({ items: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></Field>
-    <Field label="Description"><input required style={input} value={draft.description} onChange={(event) => onChange({ description: event.target.value })} /></Field>
+    <Field label="Items purchased (comma-separated)"><input style={fieldStyle(missingItems)} value={draft.items.join(", ")} onChange={(event) => onChange({ items: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></Field>
+    <Field label="Description"><input required style={fieldStyle(missingDescription)} value={draft.description} onChange={(event) => onChange({ description: event.target.value })} /></Field>
     <div style={{ fontSize: 11, color: "#656d76", wordBreak: "break-all" }}>Saved filename: {proposed}</div>
   </div>;
+}
+
+function isDraftComplete(draft: CollegeExpenseDraft): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(draft.date) && Boolean(
+    draft.merchant.trim() && draft.description.trim() &&
+    /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
+    draft.items.some((item) => item.trim()) &&
+    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0
+  );
+}
+
+function fieldStyle(invalid: boolean): React.CSSProperties {
+  return invalid ? { ...input, borderColor: "#d4a72c", background: "#fff8c5" } : input;
 }
 
 function formatCollegeExpenseFilename(draft: CollegeExpenseDraft): string {

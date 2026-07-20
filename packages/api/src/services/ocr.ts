@@ -48,15 +48,35 @@ Respond ONLY with valid JSON matching this schema:
 const COLLEGE_SYSTEM_PROMPT = `You extract purchase details from receipts for a human-reviewed college expense ledger. Do not decide or state whether an expense qualifies for a 529 plan and do not assign a category.
 
 Extract:
-1. merchant: the business, school, landlord, or payee name.
-2. date: the transaction date in YYYY-MM-DD format. If it cannot be determined, use today's date.
-3. amount: the final paid total including tax, as a number string such as "42.12".
-4. currency: the three-letter currency code, defaulting to "USD".
+1. merchant: the business, school, landlord, or payee name, or null when it cannot be determined.
+2. date: the transaction date in YYYY-MM-DD format, or null when it cannot be determined. Never substitute today's date.
+3. amount: the final paid total including tax, as a number string such as "42.12", or null when it cannot be determined. Never substitute zero for an unreadable amount.
+4. currency: the three-letter currency code, or null when it cannot be determined.
 5. items: an array of concise purchased products or services. Examples include "laptop computer", "fall tuition", "meal plan", "dormitory housing", "textbooks". Use a general description such as "purchase" when the product is not clear. Do not invent details.
-6. description: one editable, natural-language sentence describing the purchase. Prefer forms such as "A laptop computer from Costco" or "Fall tuition paid to State University". When the product is unclear, use "A purchase from Costco". Do not include an eligibility opinion.
+6. description: one editable, natural-language sentence describing the purchase, or null when there is not enough information. Prefer forms such as "A laptop computer from Costco" or "Fall tuition paid to State University". When the product is unclear but the merchant is known, use "A purchase from Costco". Do not include an eligibility opinion.
 
-Respond ONLY with valid JSON matching this schema:
-{"merchant":"string","date":"string","amount":"string","currency":"string","items":["string"],"description":"string"}`;
+Do not guess missing receipt values.`;
+
+const COLLEGE_RESPONSE_FORMAT = {
+  type: "json_schema" as const,
+  json_schema: {
+    name: "college_expense_receipt",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        merchant: { type: ["string", "null"] },
+        date: { type: ["string", "null"] },
+        amount: { type: ["string", "null"] },
+        currency: { type: ["string", "null"] },
+        items: { type: "array", items: { type: "string" } },
+        description: { type: ["string", "null"] },
+      },
+      required: ["merchant", "date", "amount", "currency", "items", "description"],
+      additionalProperties: false,
+    },
+  },
+};
 
 function parseOcrResponse(text: string): OcrResult {
   const jsonStr = text.replace(/^```json?\s*/, "").replace(/\s*```$/, "");
@@ -88,24 +108,24 @@ function parseCollegeOcrResponse(text: string): CollegeOcrResult {
   try {
     const parsed = JSON.parse(jsonStr);
     return {
-      merchant: parsed.merchant || "unknown",
-      date: parsed.date || new Date().toISOString().slice(0, 10),
-      amount: parsed.amount || "0.00",
+      merchant: parsed.merchant || "",
+      date: parsed.date || "",
+      amount: parsed.amount || "",
       currency: parsed.currency || "USD",
       items: Array.isArray(parsed.items)
         ? parsed.items.filter((item: unknown): item is string => typeof item === "string")
         : [],
-      description: parsed.description || `A purchase from ${parsed.merchant || "an unknown merchant"}`,
+      description: parsed.description || "",
     };
   } catch {
     console.error("[529 OCR] Failed to parse response:", text);
     return {
-      merchant: "unknown",
-      date: new Date().toISOString().slice(0, 10),
-      amount: "0.00",
+      merchant: "",
+      date: "",
+      amount: "",
       currency: "USD",
-      items: ["purchase"],
-      description: "A purchase from an unknown merchant",
+      items: [],
+      description: "",
     };
   }
 }
@@ -209,6 +229,7 @@ export async function extractCollegeExpenseFromImage(
     ],
     temperature: 0,
     max_completion_tokens: 500,
+    response_format: COLLEGE_RESPONSE_FORMAT,
   });
   return parseCollegeOcrResponse(response.choices[0]?.message?.content?.trim() || "");
 }
@@ -222,12 +243,12 @@ export async function extractCollegeExpenseFromPdf(
   const pdfText = (Array.isArray(extracted) ? extracted.join("\n") : extracted).trim();
   if (!pdfText) {
     return {
-      merchant: "unknown",
-      date: new Date().toISOString().slice(0, 10),
-      amount: "0.00",
+      merchant: "",
+      date: "",
+      amount: "",
       currency: "USD",
-      items: ["purchase"],
-      description: "A purchase from an unknown merchant",
+      items: [],
+      description: "",
     };
   }
   const response = await ai.chat.completions.create({
@@ -238,6 +259,7 @@ export async function extractCollegeExpenseFromPdf(
     ],
     temperature: 0,
     max_completion_tokens: 500,
+    response_format: COLLEGE_RESPONSE_FORMAT,
   });
   return parseCollegeOcrResponse(response.choices[0]?.message?.content?.trim() || "");
 }
