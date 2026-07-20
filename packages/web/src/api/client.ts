@@ -24,7 +24,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed.error || text;
+    } catch { /* use the response text */ }
+    throw new Error(message || `Request failed: ${res.status}`);
   }
   return res.json();
 }

@@ -4,6 +4,7 @@ import path from "path";
 import { config } from "./config.js";
 import { driveRouter } from "./routes/drive.js";
 import { processRouter } from "./routes/process.js";
+import { collegeRouter } from "./routes/college.js";
 
 const app = express();
 
@@ -13,6 +14,7 @@ app.use(express.json());
 // API routes
 app.use(driveRouter);
 app.use(processRouter);
+app.use(collegeRouter);
 
 // Health check
 app.get("/api/health", (_req, res) => {

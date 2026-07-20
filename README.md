@@ -1,6 +1,6 @@
 # Snapense
 
-A web app that scans receipts from your OneDrive, uses AI to extract expense details (merchant, date, total), renames the files with a standardized naming convention, and uploads them to an `/Expenses` folder on your OneDrive.
+A web app that scans receipts from your OneDrive, uses AI to extract expense details, and organizes work and 529 college expenses.
 
 ## How it works
 
@@ -10,6 +10,17 @@ A web app that scans receipts from your OneDrive, uses AI to extract expense det
 4. Azure OpenAI extracts merchant name, date, total, and expense category
 5. Files are renamed to `YYYY-MM-DD-Merchant-Category-Amount-USD` and copied to `/Expenses`
 6. Download all processed files as a ZIP
+
+## 529 expense workflow
+
+1. In Settings, add a beneficiary and select a dedicated OneDrive folder
+2. Select receipt images or PDFs and scan them with the 529-specific prompt
+3. Review and edit the merchant, date, amount, currency, items, and description
+4. Submit the reviewed expenses; renamed receipt copies and `expenses.json` are saved in the beneficiary's folder
+5. If an existing record has the same date and amount, explicitly cancel, replace it, or add another expense
+6. View saved expenses grouped by calendar year and export one row per expense to CSV
+
+Beneficiary/folder settings are stored in browser `localStorage`. Expense records remain in OneDrive; no database is used. Use a separate folder for each beneficiary.
 
 **PDF receipts** have their text extracted and sent to GPT. **Image receipts** (JPEG, PNG, etc.) are sent directly via the vision API.
 
@@ -23,7 +34,7 @@ packages/
 infra/       Azure deployment (Bicep, Container Apps, ACR)
 ```
 
-No database. OneDrive is the data store; the app is stateless.
+No database. OneDrive is the expense data store; the API is stateless.
 
 ## Setup
 

@@ -122,3 +122,96 @@ export async function uploadToExpenses(
   if (!res.ok) throw new Error(`Upload error: ${res.status} ${await res.text()}`);
   return res.json();
 }
+
+/** Get metadata for a child item by name, or null when it does not exist. */
+export async function getFolderChildByName(
+  accessToken: string,
+  folderId: string,
+  fileName: string
+): Promise<any | null> {
+  const res = await fetch(
+    `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Graph lookup error: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+/** Download a named file from a folder, or return null when it does not exist. */
+export async function downloadFolderFile(
+  accessToken: string,
+  folderId: string,
+  fileName: string
+): Promise<Buffer | null> {
+  const res = await fetch(
+    `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}:/content`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, redirect: "follow" }
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Graph download error: ${res.status} ${await res.text()}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** Upload a small file to a specific OneDrive folder. Existing names are replaced. */
+export async function uploadToFolder(
+  accessToken: string,
+  folderId: string,
+  fileName: string,
+  content: Buffer,
+  contentType = "application/octet-stream"
+): Promise<any> {
+  const res = await fetch(
+    `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}:/content`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": contentType,
+      },
+      body: content,
+    }
+  );
+  if (!res.ok) throw new Error(`Upload error: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+/** Delete a named child file if it exists. */
+export async function deleteFolderFile(
+  accessToken: string,
+  folderId: string,
+  fileName: string
+): Promise<void> {
+  const item = await getFolderChildByName(accessToken, folderId, fileName);
+  if (!item) return;
+  const res = await fetch(`${GRAPH_BASE}/me/drive/items/${item.id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Delete error: ${res.status} ${await res.text()}`);
+  }
+}
+
+/** Choose a filename that does not already exist, using -2, -3, ... suffixes. */
+export async function getUniqueFileName(
+  accessToken: string,
+  folderId: string,
+  desiredName: string,
+  reservedNames: Set<string> = new Set()
+): Promise<string> {
+  const dot = desiredName.lastIndexOf(".");
+  const base = dot > 0 ? desiredName.slice(0, dot) : desiredName;
+  const ext = dot > 0 ? desiredName.slice(dot) : "";
+  let candidate = desiredName;
+  let suffix = 2;
+  while (
+    reservedNames.has(candidate.toLowerCase()) ||
+    (await getFolderChildByName(accessToken, folderId, candidate))
+  ) {
+    candidate = `${base}-${suffix}${ext}`;
+    suffix += 1;
+  }
+  reservedNames.add(candidate.toLowerCase());
+  return candidate;
+}
