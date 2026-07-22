@@ -58,6 +58,10 @@ export interface CollegeExpenseDraft {
   currency: string;
   items: string[];
   description: string;
+  /** Optional date funds were moved out of Fidelity, YYYY-MM-DD or empty. */
+  fidelityTransferDate: string;
+  /** Optional date funds were paid to the beneficiary, YYYY-MM-DD or empty. */
+  beneficiaryPaymentDate: string;
   proposedFileName: string;
   status: "success" | "error";
   error?: string;
@@ -73,6 +77,10 @@ export interface CollegeExpense {
   currency: string;
   items: string[];
   description: string;
+  /** Absent on older ledger records; otherwise YYYY-MM-DD or empty. */
+  fidelityTransferDate?: string;
+  /** Absent on older ledger records; otherwise YYYY-MM-DD or empty. */
+  beneficiaryPaymentDate?: string;
   receiptFileName: string;
   createdAt: string;
 }
@@ -114,6 +122,15 @@ export interface CollegeSubmitResponse {
   duplicates?: CollegeDuplicate[];
   saved?: CollegeExpense[];
   cancelledDraftIds?: string[];
+}
+
+export interface UpdateCollegeExpenseDatesRequest {
+  fidelityTransferDate: string;
+  beneficiaryPaymentDate: string;
+}
+
+export interface UpdateCollegeExpenseDatesResponse {
+  expense: CollegeExpense;
 }
 
 export function sanitizeFilenamePart(value: string): string {

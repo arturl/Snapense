@@ -15,10 +15,10 @@ A web app that scans receipts from your OneDrive, uses AI to extract expense det
 
 1. In Settings, add a beneficiary and select a dedicated OneDrive folder
 2. Select receipt images or PDFs and scan them with the 529-specific prompt
-3. Review and edit the merchant, date, amount, currency, items, and description
+3. Review and edit the merchant, date, amount, currency, items, description, and optional Fidelity-transfer and beneficiary-payment dates
 4. Submit the reviewed expenses; renamed receipt copies and `expenses.json` are saved in the beneficiary's folder
 5. If an existing record has the same date and amount, explicitly cancel, replace it, or add another expense
-6. View saved expenses grouped by calendar year and export one row per expense to CSV
+6. View saved expenses grouped by calendar year, update the two optional payment dates later, and export one row per expense to CSV
 
 Beneficiary/folder settings are stored in browser `localStorage`. Expense records remain in OneDrive; no database is used. Use a separate folder for each beneficiary.
 

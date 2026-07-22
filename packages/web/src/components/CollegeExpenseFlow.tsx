@@ -176,6 +176,10 @@ function DraftEditor({ draft, onChange, onRemove }: { draft: CollegeExpenseDraft
     </div>
     <Field label="Items purchased (comma-separated)"><input style={fieldStyle(missingItems)} value={draft.items.join(", ")} onChange={(event) => onChange({ items: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></Field>
     <Field label="Description"><input required style={fieldStyle(missingDescription)} value={draft.description} onChange={(event) => onChange({ description: event.target.value })} /></Field>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+      <Field label="Money moved from Fidelity (optional)"><input type="date" style={input} value={draft.fidelityTransferDate || ""} onChange={(event) => onChange({ fidelityTransferDate: event.target.value })} /></Field>
+      <Field label="Money paid to beneficiary (optional)"><input type="date" style={input} value={draft.beneficiaryPaymentDate || ""} onChange={(event) => onChange({ beneficiaryPaymentDate: event.target.value })} /></Field>
+    </div>
     <div style={{ fontSize: 11, color: "#656d76", wordBreak: "break-all" }}>Saved filename: {proposed}</div>
   </div>;
 }

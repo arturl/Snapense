@@ -23,6 +23,8 @@ import {
   type CollegeSubmitResponse,
   type ScanCollegeRequest,
   type ScanCollegeResponse,
+  type UpdateCollegeExpenseDatesRequest,
+  type UpdateCollegeExpenseDatesResponse,
 } from "@snapense/shared";
 
 const router = Router();
@@ -48,6 +50,20 @@ async function readLedger(accessToken: string, folderId: string): Promise<Colleg
   }
 }
 
+async function writeLedger(
+  accessToken: string,
+  folderId: string,
+  ledger: CollegeExpenseLedger
+): Promise<void> {
+  await uploadToFolder(
+    accessToken,
+    folderId,
+    LEDGER_NAME,
+    Buffer.from(JSON.stringify(ledger, null, 2) + "\n", "utf8"),
+    "application/json"
+  );
+}
+
 async function assertFolder(accessToken: string, folderId: string): Promise<void> {
   const item = await getDriveItem(accessToken, folderId);
   if (!item.folder) throw new Error("The configured 529 destination is not a folder");
@@ -60,8 +76,15 @@ function validDraft(draft: CollegeExpenseDraft): boolean {
     draft.merchant.trim() && draft.description.trim() &&
     /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
     Array.isArray(draft.items) && draft.items.some((item) => item.trim()) &&
-    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0
+    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0 &&
+    validOptionalDate(draft.fidelityTransferDate) &&
+    validOptionalDate(draft.beneficiaryPaymentDate)
   );
+}
+
+function validOptionalDate(value: unknown): boolean {
+  return value === "" || value === undefined ||
+    (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
 
 function isDuplicate(draft: CollegeExpenseDraft, expense: CollegeExpense): boolean {
@@ -99,6 +122,8 @@ router.post("/api/529/scan", requireAuth, async (req: Request, res: Response) =>
           sourceFileId: fileId,
           originalName: item.name,
           ...extracted,
+          fidelityTransferDate: "",
+          beneficiaryPaymentDate: "",
           proposedFileName: "",
           status: "success",
         };
@@ -110,7 +135,8 @@ router.post("/api/529/scan", requireAuth, async (req: Request, res: Response) =>
         drafts.push({
           id: randomUUID(), sourceFileId: fileId, originalName: fileId,
           merchant: "", date: "", amount: "0.00", currency: "USD", items: [],
-          description: "", proposedFileName: "", status: "error", error: err?.message || "Scan failed",
+          description: "", fidelityTransferDate: "", beneficiaryPaymentDate: "",
+          proposedFileName: "", status: "error", error: err?.message || "Scan failed",
         });
       }
     }
@@ -196,6 +222,8 @@ router.post("/api/529/submit", requireAuth, async (req: Request, res: Response) 
           currency: draft.currency.trim().toUpperCase() || "USD",
           items: draft.items.map((item) => item.trim()).filter(Boolean),
           description: draft.description.trim(),
+          fidelityTransferDate: draft.fidelityTransferDate || "",
+          beneficiaryPaymentDate: draft.beneficiaryPaymentDate || "",
           receiptFileName,
           createdAt: old.createdAt || now,
         };
@@ -215,6 +243,8 @@ router.post("/api/529/submit", requireAuth, async (req: Request, res: Response) 
           currency: draft.currency.trim().toUpperCase() || "USD",
           items: draft.items.map((item) => item.trim()).filter(Boolean),
           description: draft.description.trim(),
+          fidelityTransferDate: draft.fidelityTransferDate || "",
+          beneficiaryPaymentDate: draft.beneficiaryPaymentDate || "",
           receiptFileName,
           createdAt: now,
         };
@@ -224,13 +254,7 @@ router.post("/api/529/submit", requireAuth, async (req: Request, res: Response) 
     }
 
     ledger.expenses.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-    await uploadToFolder(
-      accessToken,
-      folderId,
-      LEDGER_NAME,
-      Buffer.from(JSON.stringify(ledger, null, 2) + "\n", "utf8"),
-      "application/json"
-    );
+    await writeLedger(accessToken, folderId, ledger);
     const response: CollegeSubmitResponse = {
       status: "saved", saved, cancelledDraftIds,
     };
@@ -238,6 +262,39 @@ router.post("/api/529/submit", requireAuth, async (req: Request, res: Response) 
   } catch (err: any) {
     console.error("529 submit error:", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/** Update the two optional fund-movement dates on a saved expense. */
+router.patch("/api/529/ledger/:folderId/expense/:expenseId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { accessToken } = req as AuthenticatedRequest;
+    const folderId = Array.isArray(req.params.folderId) ? req.params.folderId[0] : req.params.folderId;
+    const expenseId = Array.isArray(req.params.expenseId) ? req.params.expenseId[0] : req.params.expenseId;
+    const { fidelityTransferDate = "", beneficiaryPaymentDate = "" } =
+      (req.body || {}) as UpdateCollegeExpenseDatesRequest;
+
+    if (!validOptionalDate(fidelityTransferDate) || !validOptionalDate(beneficiaryPaymentDate)) {
+      res.status(400).json({ error: "Dates must be empty or use YYYY-MM-DD format" });
+      return;
+    }
+
+    await assertFolder(accessToken, folderId);
+    const ledger = await readLedger(accessToken, folderId);
+    const expense = ledger.expenses.find((item) => item.id === expenseId);
+    if (!expense) {
+      res.status(404).json({ error: "Expense not found" });
+      return;
+    }
+
+    expense.fidelityTransferDate = fidelityTransferDate;
+    expense.beneficiaryPaymentDate = beneficiaryPaymentDate;
+    await writeLedger(accessToken, folderId, ledger);
+    const response: UpdateCollegeExpenseDatesResponse = { expense };
+    res.json(response);
+  } catch (err: any) {
+    console.error("529 expense date update error:", err);
+    res.status(500).json({ error: err?.message || "Could not update expense dates" });
   }
 });
 
