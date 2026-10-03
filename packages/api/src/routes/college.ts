@@ -18,6 +18,8 @@ import {
 import { convertToUsd } from "../services/exchangeRates.js";
 import {
   formatCollegeExpenseFilename,
+  type BulkUpdateCollegeExpenseDatesRequest,
+  type BulkUpdateCollegeExpenseDatesResponse,
   type CollegeDuplicate,
   type CollegeCurrencyConversion,
   type CollegeExpense,
@@ -517,6 +519,40 @@ router.patch("/api/529/ledger/:folderId/expense/:expenseId", requireAuth, async 
     res.json(response);
   } catch (err: any) {
     console.error("529 expense date update error:", err);
+    res.status(500).json({ error: err?.message || "Could not update expense dates" });
+  }
+});
+
+/** Fill empty fund-movement dates for several expenses in one ledger write. */
+router.patch("/api/529/ledger/:folderId/expenses/dates", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { accessToken } = req as AuthenticatedRequest;
+    const folderId = Array.isArray(req.params.folderId) ? req.params.folderId[0] : req.params.folderId;
+    const { expenseIds, date } = (req.body || {}) as BulkUpdateCollegeExpenseDatesRequest;
+    if (!Array.isArray(expenseIds) || expenseIds.length === 0 ||
+      expenseIds.some((id) => typeof id !== "string" || !id) ||
+      typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.status(400).json({ error: "Expense IDs and a date in YYYY-MM-DD format are required" });
+      return;
+    }
+
+    await assertFolder(accessToken, folderId);
+    const ledger = await readLedger(accessToken, folderId);
+    const requestedIds = new Set(expenseIds);
+    const expenses = ledger.expenses.filter((expense) => requestedIds.has(expense.id));
+    if (expenses.length !== requestedIds.size) {
+      res.status(404).json({ error: "One or more selected expenses no longer exists" });
+      return;
+    }
+    for (const expense of expenses) {
+      if (!expense.fidelityTransferDate) expense.fidelityTransferDate = date;
+      if (!expense.beneficiaryPaymentDate) expense.beneficiaryPaymentDate = date;
+    }
+    await writeLedger(accessToken, folderId, ledger);
+    const response: BulkUpdateCollegeExpenseDatesResponse = { expenses };
+    res.json(response);
+  } catch (err: any) {
+    console.error("529 bulk expense date update error:", err);
     res.status(500).json({ error: err?.message || "Could not update expense dates" });
   }
 });

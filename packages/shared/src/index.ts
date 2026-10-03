@@ -198,6 +198,15 @@ export interface UpdateCollegeExpenseDatesResponse {
   expense: CollegeExpense;
 }
 
+export interface BulkUpdateCollegeExpenseDatesRequest {
+  expenseIds: string[];
+  date: string;
+}
+
+export interface BulkUpdateCollegeExpenseDatesResponse {
+  expenses: CollegeExpense[];
+}
+
 export function sanitizeFilenamePart(value: string): string {
   return value
     .trim()

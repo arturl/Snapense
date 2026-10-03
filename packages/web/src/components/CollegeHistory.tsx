@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CollegeExpense, CollegeExpenseLedger, CollegePlan, UpdateCollegeExpenseDatesResponse } from "@snapense/shared";
+import type { BulkUpdateCollegeExpenseDatesResponse, CollegeExpense, CollegeExpenseLedger, CollegePlan, UpdateCollegeExpenseDatesResponse } from "@snapense/shared";
 import { api } from "../api/client";
 
 export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]; onOpenSettings: () => void }) {
@@ -12,10 +12,14 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDates, setEditDates] = useState({ fidelityTransferDate: "", beneficiaryPaymentDate: "" });
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [copyMessage, setCopyMessage] = useState("");
+  const [summaryBusy, setSummaryBusy] = useState(false);
 
   useEffect(() => {
     if (!plan) return;
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setSelectedIds(new Set()); setSummaryOpen(false);
     api.get<CollegeExpenseLedger>(`/api/529/ledger/${plan.folderId}`)
       .then(setLedger).catch((err) => setError(err.message)).finally(() => setLoading(false));
   }, [plan?.folderId]);
@@ -29,6 +33,9 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
     return [...result.entries()].sort(([a], [b]) => b.localeCompare(a));
   }, [ledger]);
   const years = groups.map(([year]) => year);
+  const selectedExpenses = useMemo(() => ledger.expenses
+    .filter((expense) => selectedIds.has(expense.id))
+    .sort((a, b) => a.date.localeCompare(b.date)), [ledger, selectedIds]);
 
   if (!plan) return <div style={card}><h2 style={{ marginTop: 0 }}>No 529 plans configured</h2><button style={primaryBtn} onClick={onOpenSettings}>Open Settings</button></div>;
 
@@ -76,6 +83,73 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
     }
   }
 
+  function toggleSelected(expenseId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      next.has(expenseId) ? next.delete(expenseId) : next.add(expenseId);
+      return next;
+    });
+  }
+
+  async function copySummary() {
+    const plainText = reimbursementPlainText(plan.name, selectedExpenses);
+    const html = reimbursementHtml(plan.name, selectedExpenses);
+    try {
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/plain": new Blob([plainText], { type: "text/plain" }),
+          "text/html": new Blob([html], { type: "text/html" }),
+        })]);
+      } else {
+        await navigator.clipboard.writeText(plainText);
+      }
+      setCopyMessage("Copied to clipboard");
+    } catch {
+      setCopyMessage("Could not copy automatically. Select the summary text and copy it manually.");
+    }
+  }
+
+  async function copySubject() {
+    try {
+      await navigator.clipboard.writeText(reimbursementSubject(selectedExpenses));
+      setCopyMessage("Subject copied to clipboard");
+    } catch {
+      setCopyMessage("Could not copy the subject automatically.");
+    }
+  }
+
+  async function createSummary() {
+    setCopyMessage("");
+    const needsDates = selectedExpenses.some((expense) =>
+      !expense.fidelityTransferDate || !expense.beneficiaryPaymentDate
+    );
+    if (needsDates) {
+      const today = localToday();
+      const approved = window.confirm(
+        `Set empty "Fidelity transfer" and "Paid to beneficiary" dates to today (${today}) for the selected expenses? Existing dates will be preserved.`
+      );
+      if (approved) {
+        setSummaryBusy(true);
+        try {
+          const result = await api.patch<BulkUpdateCollegeExpenseDatesResponse>(
+            `/api/529/ledger/${encodeURIComponent(plan.folderId)}/expenses/dates`,
+            { expenseIds: selectedExpenses.map((expense) => expense.id), date: today }
+          );
+          const updated = new Map(result.expenses.map((expense) => [expense.id, expense]));
+          setLedger((current) => ({
+            ...current,
+            expenses: current.expenses.map((expense) => updated.get(expense.id) || expense),
+          }));
+        } catch (err: any) {
+          setCopyMessage(`Dates were not updated: ${err.message}`);
+        } finally {
+          setSummaryBusy(false);
+        }
+      }
+    }
+    setSummaryOpen(true);
+  }
+
   function exportCsv() {
     const expenses = exportYear === "all" ? ledger.expenses : ledger.expenses.filter((expense) => expense.date.startsWith(exportYear));
     const headers = ["Year", "Date", "Fidelity transfer date", "Beneficiary payment date", "Beneficiary", "Merchant", "Original amount", "Original currency", "USD amount", "USD currency", "Conversion method", "FX rate (USD per original currency)", "FX requested date", "FX effective date", "FX source", "Provider", "FRED series", "FX source URL", "FX retrieved at", "Items", "Description", "Receipt filename"];
@@ -102,11 +176,13 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
   }
 
   return <div>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
       <h2 style={{ margin: 0, fontSize: 20 }}>529 expense history</h2><span style={{ flex: 1 }} />
       <label style={label}>Beneficiary <select style={select} value={plan.id} onChange={(event) => { setPlanId(event.target.value); setExportYear("all"); setEditingId(null); }}>{plans.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label style={label}>CSV period <select style={select} value={exportYear} onChange={(event) => setExportYear(event.target.value)}><option value="all">All years</option>{years.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
       <button style={{ ...primaryBtn, opacity: ledger.expenses.length ? 1 : .5 }} disabled={!ledger.expenses.length} onClick={exportCsv}>Export CSV</button>
+      <button style={{ ...primaryBtn, opacity: selectedExpenses.length && !summaryBusy ? 1 : .5 }} disabled={!selectedExpenses.length || summaryBusy} onClick={createSummary}>{summaryBusy ? "Updating dates…" : `Create reimbursement summary${selectedExpenses.length ? ` (${selectedExpenses.length})` : ""}`}</button>
+      {selectedExpenses.length > 0 && <button style={smallBtn} onClick={() => setSelectedIds(new Set())}>Clear selection</button>}
     </div>
     {error && <div style={errorBox}>{error}</div>}
     {loading ? <div style={card}>Loading ledger…</div> : groups.length === 0 ? <div style={{ ...card, textAlign: "center", color: "#656d76", padding: 40 }}>No saved expenses for {plan.name} yet.</div> : groups.map(([year, expenses]) => {
@@ -119,10 +195,11 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
       ).join(" + ");
       return <section key={year} style={{ ...card, marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}><h3 style={{ margin: 0, fontSize: 18 }}>{year}</h3><span style={{ flex: 1 }} /><span style={{ color: "#656d76", fontSize: 13 }}>{expenses.length} expense{expenses.length === 1 ? "" : "s"} · {totalText}</span></div>
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={{ ...th, minWidth: 300 }}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={{ ...th, width: 150 }}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={{ ...th, width: 34 }}>Select</th><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={{ ...th, minWidth: 300 }}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={{ ...th, width: 150 }}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
           <tbody>{expenses.map((expense) => {
             const editing = editingId === expense.id;
             return <tr key={expense.id}>
+              <td style={td}><input aria-label={`Select ${expense.description}`} type="checkbox" checked={selectedIds.has(expense.id)} onChange={() => toggleSelected(expense.id)} /></td>
               <td style={td}>{expense.date}</td>
               <td style={td}>{editing ? <input aria-label="Fidelity transfer date" type="date" style={dateInput} value={editDates.fidelityTransferDate} onChange={(event) => setEditDates((dates) => ({ ...dates, fidelityTransferDate: event.target.value }))} /> : expense.fidelityTransferDate || "—"}</td>
               <td style={td}>{editing ? <input aria-label="Beneficiary payment date" type="date" style={dateInput} value={editDates.beneficiaryPaymentDate} onChange={(event) => setEditDates((dates) => ({ ...dates, beneficiaryPaymentDate: event.target.value }))} /> : expense.beneficiaryPaymentDate || "—"}</td>
@@ -142,7 +219,111 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
         </table></div>
       </section>;
     })}
+    {summaryOpen && selectedExpenses.length > 0 && <ReimbursementSummary
+      beneficiary={plan.name}
+      expenses={selectedExpenses}
+      copyMessage={copyMessage}
+      onCopy={copySummary}
+      onCopySubject={copySubject}
+      onClose={() => setSummaryOpen(false)}
+    />}
   </div>;
+}
+
+function ReimbursementSummary({ beneficiary, expenses, copyMessage, onCopy, onCopySubject, onClose }: {
+  beneficiary: string;
+  expenses: CollegeExpense[];
+  copyMessage: string;
+  onCopy: () => void;
+  onCopySubject: () => void;
+  onClose: () => void;
+}) {
+  const totals = reimbursementTotals(expenses);
+  const subject = reimbursementSubject(expenses);
+  return <div style={modalOverlay} role="dialog" aria-modal="true" aria-label="Reimbursement summary">
+    <div style={modalCard}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 18 }}>Reimbursement summary</h3>
+        <span style={{ flex: 1 }} />
+        <button style={smallBtn} onClick={onClose}>Close</button>
+      </div>
+      <div style={subjectBox}>
+        <div><span style={{ color: "#656d76", fontSize: 11, fontWeight: 600 }}>EMAIL SUBJECT</span><br /><strong>{subject}</strong></div>
+        <button style={smallBtn} onClick={onCopySubject}>Copy subject</button>
+      </div>
+      <div style={emailPreview}>
+        <p>Hi {beneficiary},</p>
+        <p>Here is the summary of the reimbursement you're getting. Details:</p>
+        <table style={{ width: "100%", borderCollapse: "collapse", margin: "16px 0" }}>
+          <thead><tr><th style={summaryTh}>Date</th><th style={summaryTh}>Description</th><th style={{ ...summaryTh, textAlign: "right" }}>Amount</th></tr></thead>
+          <tbody>{expenses.map((expense) => <tr key={expense.id}>
+            <td style={{ ...summaryTd, whiteSpace: "nowrap" }}>{expense.date}</td>
+            <td style={summaryTd}>{expense.description}</td>
+            <td style={{ ...summaryTd, textAlign: "right", whiteSpace: "nowrap" }}>{formatMoney(expense.originalAmount ?? expense.amount, expense.originalCurrency || expense.currency)}</td>
+          </tr>)}</tbody>
+        </table>
+        <p>The total amount is <strong>{totals.original} / {totals.usd}</strong>.</p>
+        <hr style={{ border: 0, borderTop: "1px solid #d1d9e0", marginTop: 24 }} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", marginTop: 14, gap: 10 }}>
+        <button style={primaryBtn} onClick={onCopy}>Copy summary</button>
+        {copyMessage && <span style={{ color: copyMessage.toLowerCase().includes("copied") ? "#116329" : "#a40e26", fontSize: 12 }}>{copyMessage}</span>}
+      </div>
+    </div>
+  </div>;
+}
+
+function reimbursementTotals(expenses: CollegeExpense[]): { original: string; usd: string } {
+  const originals = expenses.reduce<Record<string, number>>((result, expense) => {
+    const currency = expense.originalCurrency || expense.currency;
+    result[currency] = (result[currency] || 0) + (expense.originalAmount ?? expense.amount);
+    return result;
+  }, {});
+  return {
+    original: Object.entries(originals).map(([currency, amount]) => formatMoney(amount, currency)).join(" + "),
+    usd: formatMoney(expenses.reduce((sum, expense) => sum + expense.amount, 0), "USD"),
+  };
+}
+
+function reimbursementSubject(expenses: CollegeExpense[]): string {
+  const totals = reimbursementTotals(expenses);
+  return `Reimbursement for ${expenses.length} expense${expenses.length === 1 ? "" : "s"}, total ${totals.original} / ${totals.usd}`;
+}
+
+function reimbursementPlainText(beneficiary: string, expenses: CollegeExpense[]): string {
+  const totals = reimbursementTotals(expenses);
+  const rows = expenses.map((expense) =>
+    `${expense.date}\t${expense.description}\t${formatMoney(expense.originalAmount ?? expense.amount, expense.originalCurrency || expense.currency)}`
+  );
+  return [
+    `Hi ${beneficiary},`, "", "Here is the summary of the reimbursement you're getting. Details:", "",
+    "Date\tDescription\tAmount", ...rows, "",
+    `The total amount is ${totals.original} / ${totals.usd}.`, "", "---",
+  ].join("\n");
+}
+
+function reimbursementHtml(beneficiary: string, expenses: CollegeExpense[]): string {
+  const totals = reimbursementTotals(expenses);
+  const rows = expenses.map((expense) => `<tr><td style="padding:6px 8px;border:1px solid #d1d9e0;white-space:nowrap">${escapeHtml(expense.date)}</td><td style="padding:6px 8px;border:1px solid #d1d9e0">${escapeHtml(expense.description)}</td><td style="padding:6px 8px;border:1px solid #d1d9e0;text-align:right;white-space:nowrap">${escapeHtml(formatMoney(expense.originalAmount ?? expense.amount, expense.originalCurrency || expense.currency))}</td></tr>`).join("");
+  return `<div><p>Hi ${escapeHtml(beneficiary)},</p><p>Here is the summary of the reimbursement you're getting. Details:</p><table style="border-collapse:collapse"><thead><tr><th style="padding:6px 8px;border:1px solid #d1d9e0;text-align:left">Date</th><th style="padding:6px 8px;border:1px solid #d1d9e0;text-align:left">Description</th><th style="padding:6px 8px;border:1px solid #d1d9e0;text-align:right">Amount</th></tr></thead><tbody>${rows}</tbody></table><p>The total amount is <strong>${escapeHtml(totals.original)} / ${escapeHtml(totals.usd)}</strong>.</p><hr></div>`;
+}
+
+function formatMoney(amount: number, currency: string): string {
+  return amount.toLocaleString("en-US", { style: "currency", currency: currency || "USD" });
+}
+
+function localToday(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]!);
 }
 
 function csvCell(value: string): string { return `"${String(value).replace(/"/g, '""')}"`; }
@@ -156,6 +337,12 @@ const smallBtn: React.CSSProperties = { padding: "5px 8px", border: "1px solid #
 const smallPrimaryBtn: React.CSSProperties = { ...smallBtn, borderColor: "#0860ca", background: "#0969da", color: "#fff" };
 const dateInput: React.CSSProperties = { border: "1px solid #d1d9e0", borderRadius: 6, padding: "5px 6px", fontSize: 12 };
 const receiptLink: React.CSSProperties = { border: 0, background: "none", color: "#0969da", cursor: "pointer", padding: 0, font: "inherit", whiteSpace: "nowrap", textDecoration: "underline" };
+const modalOverlay: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(31, 35, 40, .45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 };
+const modalCard: React.CSSProperties = { width: "min(820px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 8, boxShadow: "0 12px 36px rgba(0, 0, 0, .25)", padding: 20 };
+const emailPreview: React.CSSProperties = { border: "1px solid #d1d9e0", borderRadius: 6, padding: "18px 22px", color: "#1f2328", fontSize: 14, lineHeight: 1.5, background: "#fff" };
+const subjectBox: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, border: "1px solid #d1d9e0", borderRadius: 6, padding: "10px 12px", marginBottom: 12, background: "#f6f8fa", fontSize: 13 };
+const summaryTh: React.CSSProperties = { padding: "7px 8px", border: "1px solid #d1d9e0", textAlign: "left", background: "#f6f8fa" };
+const summaryTd: React.CSSProperties = { padding: "7px 8px", border: "1px solid #d1d9e0", verticalAlign: "top" };
 const th: React.CSSProperties = { padding: "8px", borderBottom: "1px solid #d1d9e0", textAlign: "left", fontSize: 12 };
 const td: React.CSSProperties = { padding: "9px 8px", borderBottom: "1px solid #eaeef2", verticalAlign: "top" };
 const errorBox: React.CSSProperties = { background: "#ffebe9", border: "1px solid #ffcecb", color: "#a40e26", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 };
