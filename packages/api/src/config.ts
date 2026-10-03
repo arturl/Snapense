@@ -13,6 +13,7 @@ const envSchema = z.object({
   AZURE_OPENAI_ENDPOINT: z.string().optional(),
   AZURE_OPENAI_API_KEY: z.string().optional(),
   AZURE_OPENAI_DEPLOYMENT: z.string().default("gpt-5.4-nano"),
+  FRED_API_KEY: z.string().optional(),
 });
 
 export const config = envSchema.parse(process.env);

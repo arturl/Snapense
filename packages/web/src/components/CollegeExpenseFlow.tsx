@@ -4,6 +4,7 @@ import {
   type CollegeExpenseDraft,
   type CollegePlan,
   type CollegeSubmitResponse,
+  type ConvertCollegeExpenseResponse,
   type DriveItem,
   type DuplicateAction,
   type DuplicateResolution,
@@ -26,6 +27,7 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
   const [duplicates, setDuplicates] = useState<CollegeDuplicate[]>([]);
   const [resolutions, setResolutions] = useState<Record<string, DuplicateResolution>>({});
   const [message, setMessage] = useState("");
+  const [converting, setConverting] = useState<Set<string>>(new Set());
   const currentFolderId = breadcrumbs[breadcrumbs.length - 1].id;
 
   const loadFolder = useCallback(async (folderId: string | null) => {
@@ -53,8 +55,38 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
   }
 
   function updateDraft(id: string, changes: Partial<CollegeExpenseDraft>) {
-    setDrafts((all) => all.map((draft) => draft.id === id ? { ...draft, ...changes } : draft));
+    const invalidatesConversion = "date" in changes || "amount" in changes ||
+      "currency" in changes || "conversionMethod" in changes;
+    setDrafts((all) => all.map((draft) => draft.id === id ? {
+      ...draft,
+      ...changes,
+      ...(invalidatesConversion ? { usdAmount: undefined, conversion: undefined, conversionError: undefined } : {}),
+    } : draft));
     setDuplicates([]); setResolutions({}); setMessage("");
+  }
+
+  async function refreshConversion(draft: CollegeExpenseDraft) {
+    const inputs = { amount: draft.amount, currency: draft.currency, date: draft.date, conversionMethod: draft.conversionMethod };
+    setConverting((current) => new Set(current).add(draft.id));
+    updateDraft(draft.id, { conversionError: undefined });
+    try {
+      const conversion = await api.post<ConvertCollegeExpenseResponse>("/api/529/convert", {
+        amount: inputs.amount,
+        currency: inputs.currency,
+        date: inputs.date,
+      });
+      setDrafts((all) => all.map((current) => current.id === draft.id &&
+        current.amount === inputs.amount && current.currency === inputs.currency && current.date === inputs.date && current.conversionMethod === inputs.conversionMethod
+        ? { ...current, ...conversion, conversionError: undefined }
+        : current));
+    } catch (err: any) {
+      setDrafts((all) => all.map((current) => current.id === draft.id &&
+        current.amount === inputs.amount && current.currency === inputs.currency && current.date === inputs.date && current.conversionMethod === inputs.conversionMethod
+        ? { ...current, usdAmount: undefined, conversion: undefined, conversionError: err.message }
+        : current));
+    } finally {
+      setConverting((current) => { const next = new Set(current); next.delete(draft.id); return next; });
+    }
   }
 
   async function submit(reviewedResolutions = resolutions) {
@@ -127,7 +159,7 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
         <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>Review before submission</h3>
         <p style={{ ...muted, margin: "0 0 14px" }}>Correct every field below. Nothing is saved until you submit.</p>
         {drafts.map((draft) => draft.status === "error" ? <div key={draft.id} style={errorBox}><strong>{draft.originalName}</strong>: {draft.error} <button style={smallLink} onClick={() => setDrafts((all) => all.filter((item) => item.id !== draft.id))}>Remove</button></div> :
-          <DraftEditor key={draft.id} draft={draft} onChange={(changes) => updateDraft(draft.id, changes)} onRemove={() => setDrafts((all) => all.filter((item) => item.id !== draft.id))} />)}
+          <DraftEditor key={draft.id} draft={draft} converting={converting.has(draft.id)} onConvert={() => refreshConversion(draft)} onChange={(changes) => updateDraft(draft.id, changes)} onRemove={() => setDrafts((all) => all.filter((item) => item.id !== draft.id))} />)}
 
         {duplicates.length > 0 && <div style={{ borderTop: "2px solid #bf8700", paddingTop: 14, marginTop: 14 }}>
           <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>Possible duplicates need a decision</h3>
@@ -138,7 +170,7 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
             return <div key={duplicate.draftId} style={duplicateBox}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13 }}>
                 <div><strong>Existing</strong><br />{duplicate.existing.date} · {duplicate.existing.amount.toFixed(2)} {duplicate.existing.currency}<br />{duplicate.existing.description}<br /><span style={muted}>{duplicate.existing.receiptFileName}</span></div>
-                <div><strong>Incoming</strong><br />{incoming.date} · {Number(incoming.amount).toFixed(2)} {incoming.currency}<br />{incoming.description}<br /><span style={muted}>{incoming.originalName}</span></div>
+                <div><strong>Incoming</strong><br />{incoming.date} · {Number(incoming.usdAmount).toFixed(2)} USD<br /><span style={muted}>Receipt: {Number(incoming.amount).toFixed(2)} {incoming.currency}</span><br />{incoming.description}<br /><span style={muted}>{incoming.originalName}</span></div>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 {(["cancel", "replace", "copy"] as DuplicateAction[]).map((action) => <button key={action} style={{ ...secondaryBtn, background: chosen === action ? "#ddf4ff" : "#f6f8fa", borderColor: chosen === action ? "#0969da" : "#d1d9e0" }} onClick={() => chooseResolution(duplicate, action)}>{action === "copy" ? "Add another expense" : action === "replace" ? "Replace existing" : "Cancel incoming"}</button>)}
@@ -157,7 +189,7 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
   </div>;
 }
 
-function DraftEditor({ draft, onChange, onRemove }: { draft: CollegeExpenseDraft; onChange: (changes: Partial<CollegeExpenseDraft>) => void; onRemove: () => void }) {
+function DraftEditor({ draft, converting, onConvert, onChange, onRemove }: { draft: CollegeExpenseDraft; converting: boolean; onConvert: () => void; onChange: (changes: Partial<CollegeExpenseDraft>) => void; onRemove: () => void }) {
   const extension = draft.originalName.includes(".") ? draft.originalName.slice(draft.originalName.lastIndexOf(".")) : "";
   const proposed = formatCollegeExpenseFilename(draft) + extension;
   const missingDate = !/^\d{4}-\d{2}-\d{2}$/.test(draft.date);
@@ -172,7 +204,13 @@ function DraftEditor({ draft, onChange, onRemove }: { draft: CollegeExpenseDraft
       <Field label="Date"><input required type="date" style={fieldStyle(missingDate)} value={draft.date} onChange={(event) => onChange({ date: event.target.value })} /></Field>
       <Field label="Merchant"><input required style={fieldStyle(missingMerchant)} value={draft.merchant} onChange={(event) => onChange({ merchant: event.target.value })} /></Field>
       <Field label="Amount"><input required min="0.01" step="0.01" type="number" style={fieldStyle(missingAmount)} value={draft.amount} onChange={(event) => onChange({ amount: event.target.value })} /></Field>
-      <Field label="Currency"><input required maxLength={3} style={fieldStyle(missingCurrency)} value={draft.currency} onChange={(event) => onChange({ currency: event.target.value.toUpperCase() })} /></Field>
+      <Field label="Currency"><input required maxLength={3} style={fieldStyle(missingCurrency)} value={draft.currency} onChange={(event) => {
+        const currency = event.target.value.toUpperCase();
+        onChange({
+          currency,
+          conversionMethod: currency === "USD" ? "none" : draft.conversionMethod === "none" ? "fred" : draft.conversionMethod,
+        });
+      }} /></Field>
     </div>
     <Field label="Items purchased (comma-separated)"><input style={fieldStyle(missingItems)} value={draft.items.join(", ")} onChange={(event) => onChange({ items: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></Field>
     <Field label="Description"><input required style={fieldStyle(missingDescription)} value={draft.description} onChange={(event) => onChange({ description: event.target.value })} /></Field>
@@ -180,6 +218,32 @@ function DraftEditor({ draft, onChange, onRemove }: { draft: CollegeExpenseDraft
       <Field label="Money moved from Fidelity (optional)"><input type="date" style={input} value={draft.fidelityTransferDate || ""} onChange={(event) => onChange({ fidelityTransferDate: event.target.value })} /></Field>
       <Field label="Money paid to beneficiary (optional)"><input type="date" style={input} value={draft.beneficiaryPaymentDate || ""} onChange={(event) => onChange({ beneficiaryPaymentDate: event.target.value })} /></Field>
     </div>
+    {draft.currency.toUpperCase() !== "USD" && <Field label="USD conversion method">
+      <select style={input} value={draft.conversionMethod === "bank" ? "bank" : "fred"} onChange={(event) => onChange({ conversionMethod: event.target.value as "fred" | "bank" })}>
+        <option value="fred">FRED reference rate</option>
+        <option value="bank">Actual USD paid by bank/card</option>
+      </select>
+    </Field>}
+    {draft.conversionMethod === "bank" && draft.currency.toUpperCase() !== "USD" ? <div style={conversionBox}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 9, width: "100%" }}>
+        <Field label="Actual USD charged"><input required min="0.01" step="0.01" type="number" style={fieldStyle(!Number.isFinite(Number(draft.usdAmount)) || Number(draft.usdAmount) <= 0)} value={draft.usdAmount || ""} onChange={(event) => onChange({ usdAmount: event.target.value, conversion: undefined, conversionError: undefined })} /></Field>
+        <Field label="Bank/card provider (optional)"><input style={input} value={draft.bankProvider || ""} placeholder="e.g. Chase Visa" onChange={(event) => onChange({ bankProvider: event.target.value })} /></Field>
+        <Field label="Posting date (optional)"><input type="date" style={input} value={draft.bankEffectiveDate || ""} onChange={(event) => onChange({ bankEffectiveDate: event.target.value })} /></Field>
+        {draft.usdAmount && Number(draft.amount) > 0 && <div style={{ ...muted, gridColumn: "1 / -1" }}>Implied rate: {(Number(draft.usdAmount) / Number(draft.amount)).toFixed(8)} USD/{draft.currency.toUpperCase()}. The actual USD amount will be stored as the ledger amount.</div>}
+      </div>
+    </div> : <div style={conversionBox}>
+      <div>
+        <strong>USD ledger amount</strong><br />
+        {draft.usdAmount ? <>
+          <span style={{ fontSize: 16 }}>${Number(draft.usdAmount).toFixed(2)} USD</span>
+          {draft.conversion?.method === "fred" && <div style={{ ...muted, marginTop: 3 }}>
+            {Number(draft.amount).toFixed(2)} {draft.currency.toUpperCase()} × {draft.conversion.rate} USD/{draft.currency.toUpperCase()} · FRED {draft.conversion.seriesId}, observation {draft.conversion.effectiveDate} · <a href={draft.conversion.sourceUrl} target="_blank" rel="noreferrer">source</a>
+          </div>}
+          {!draft.conversion && <div style={{ ...muted, marginTop: 3 }}>No conversion needed for a USD receipt.</div>}
+        </> : <span style={{ color: draft.conversionError ? "#a40e26" : "#9a6700", fontSize: 12 }}>{draft.conversionError || "Refresh the conversion after editing the date, amount, or currency."}</span>}
+      </div>
+      <button type="button" style={{ ...secondaryBtn, whiteSpace: "nowrap" }} disabled={converting || missingDate || missingAmount || missingCurrency} onClick={onConvert}>{converting ? "Converting…" : "Refresh USD conversion"}</button>
+    </div>}
     <div style={{ fontSize: 11, color: "#656d76", wordBreak: "break-all" }}>Saved filename: {proposed}</div>
   </div>;
 }
@@ -189,7 +253,8 @@ function isDraftComplete(draft: CollegeExpenseDraft): boolean {
     draft.merchant.trim() && draft.description.trim() &&
     /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
     draft.items.some((item) => item.trim()) &&
-    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0
+    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0 &&
+    Number.isFinite(Number(draft.usdAmount)) && Number(draft.usdAmount) > 0
   );
 }
 
@@ -219,4 +284,5 @@ const empty: React.CSSProperties = { padding: 24, textAlign: "center", color: "#
 const errorBox: React.CSSProperties = { background: "#ffebe9", border: "1px solid #ffcecb", color: "#a40e26", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 };
 const successBox: React.CSSProperties = { background: "#dafbe1", border: "1px solid #aceebb", color: "#116329", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 };
 const draftBox: React.CSSProperties = { border: "1px solid #d1d9e0", background: "#f6f8fa", padding: 12, borderRadius: 6, marginBottom: 10 };
+const conversionBox: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, border: "1px solid #b6d7a8", background: "#f0fff4", padding: 10, borderRadius: 6, marginBottom: 9 };
 const duplicateBox: React.CSSProperties = { border: "1px solid #d4a72c", background: "#fff8c5", padding: 12, borderRadius: 6, marginBottom: 10 };

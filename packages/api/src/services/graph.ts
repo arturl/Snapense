@@ -138,6 +138,38 @@ export async function getFolderChildByName(
   return res.json();
 }
 
+/** Ensure a named child folder exists and return its item ID. */
+export async function ensureChildFolder(
+  accessToken: string,
+  parentFolderId: string,
+  folderName: string
+): Promise<string> {
+  const existing = await getFolderChildByName(accessToken, parentFolderId, folderName);
+  if (existing) {
+    if (!existing.folder) throw new Error(`${folderName} exists but is not a folder`);
+    return existing.id as string;
+  }
+
+  const res = await fetch(`${GRAPH_BASE}/me/drive/items/${parentFolderId}/children`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: folderName,
+      folder: {},
+      "@microsoft.graph.conflictBehavior": "fail",
+    }),
+  });
+  if (!res.ok) {
+    const raced = await getFolderChildByName(accessToken, parentFolderId, folderName);
+    if (raced?.folder) return raced.id as string;
+    throw new Error(`Failed to create ${folderName} folder: ${res.status} ${await res.text()}`);
+  }
+  return ((await res.json()) as { id: string }).id;
+}
+
 /** Download a named file from a folder, or return null when it does not exist. */
 export async function downloadFolderFile(
   accessToken: string,

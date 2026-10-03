@@ -47,6 +47,36 @@ export interface CollegePlan {
   folderName: string;
 }
 
+/** A public reference-rate conversion. */
+export interface CollegeFredConversion {
+  method: "fred";
+  /** USD received for one unit of the original currency. */
+  rate: number;
+  requestedDate: string;
+  effectiveDate: string;
+  source: "Federal Reserve Board H.10 via FRED";
+  seriesId: string;
+  sourceUrl: string;
+  retrievedAt: string;
+}
+
+/** A conversion derived from the actual USD amount charged by a bank or card. */
+export interface CollegeBankConversion {
+  method: "bank";
+  /** Actual USD charged divided by the original foreign-currency amount. */
+  rate: number;
+  effectiveDate: string;
+  source: "Actual USD amount charged by bank";
+  provider?: string;
+}
+
+export type CollegeCurrencyConversion = CollegeFredConversion | CollegeBankConversion;
+
+/** @deprecated Transitional shape written before the generalized conversion schema. */
+export type CollegeExchangeRate = Omit<CollegeFredConversion, "method">;
+
+export type CollegeConversionMethod = "none" | "fred" | "bank";
+
 /** Editable result produced by scanning a potential 529 receipt. */
 export interface CollegeExpenseDraft {
   id: string;
@@ -56,6 +86,15 @@ export interface CollegeExpenseDraft {
   date: string;
   amount: string;
   currency: string;
+  /** Preview of the canonical USD amount. Recomputed by the server at submission. */
+  usdAmount?: string;
+  conversionMethod: CollegeConversionMethod;
+  conversion?: CollegeCurrencyConversion;
+  /** Optional bank/card name for an actual-charge conversion. */
+  bankProvider?: string;
+  /** Optional bank/card posting date; defaults to the expense date. */
+  bankEffectiveDate?: string;
+  conversionError?: string;
   items: string[];
   description: string;
   /** Optional date funds were moved out of Fidelity, YYYY-MM-DD or empty. */
@@ -75,6 +114,13 @@ export interface CollegeExpense {
   merchant: string;
   amount: number;
   currency: string;
+  /** Receipt amount/currency before conversion. Absent on legacy records. */
+  originalAmount?: number;
+  originalCurrency?: string;
+  /** Absent for USD receipts and legacy records. */
+  conversion?: CollegeCurrencyConversion;
+  /** Transitional field supported during version-1 ledger migration. */
+  exchangeRate?: CollegeExchangeRate;
   items: string[];
   description: string;
   /** Absent on older ledger records; otherwise YYYY-MM-DD or empty. */
@@ -86,7 +132,7 @@ export interface CollegeExpense {
 }
 
 export interface CollegeExpenseLedger {
-  version: 1;
+  version: 1 | 2;
   expenses: CollegeExpense[];
 }
 
@@ -96,6 +142,25 @@ export interface ScanCollegeRequest {
 
 export interface ScanCollegeResponse {
   drafts: CollegeExpenseDraft[];
+}
+
+export interface ConvertCollegeExpenseRequest {
+  amount: string;
+  currency: string;
+  date: string;
+}
+
+export interface ConvertCollegeExpenseResponse {
+  usdAmount: string;
+  conversion?: CollegeCurrencyConversion;
+}
+
+export interface MigrateCollegeLedgerResponse {
+  status: "migrated" | "already-current";
+  backupFileName?: string;
+  migratedExpenses: number;
+  bankConversions: number;
+  fredConversions: number;
 }
 
 export type DuplicateAction = "replace" | "copy" | "cancel";

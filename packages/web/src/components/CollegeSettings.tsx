@@ -1,10 +1,13 @@
 import { useState } from "react";
-import type { CollegePlan } from "@snapense/shared";
+import type { CollegePlan, MigrateCollegeLedgerResponse } from "@snapense/shared";
 import { DriveFolderPicker } from "./DriveFolderPicker";
+import { api } from "../api/client";
 
 export function CollegeSettings({ plans, onChange }: { plans: CollegePlan[]; onChange: (plans: CollegePlan[]) => void }) {
   const [newName, setNewName] = useState("");
   const [pickerFor, setPickerFor] = useState<string | "new" | null>(null);
+  const [migratingId, setMigratingId] = useState<string | null>(null);
+  const [migrationMessages, setMigrationMessages] = useState<Record<string, string>>({});
 
   function chooseFolder(folder: { id: string; name: string }) {
     if (pickerFor === "new") {
@@ -18,13 +21,32 @@ export function CollegeSettings({ plans, onChange }: { plans: CollegePlan[]; onC
     setPickerFor(null);
   }
 
+  async function migrateLedger(plan: CollegePlan) {
+    if (!window.confirm(`Back up and migrate ${plan.name}'s expenses.json to the new currency format? The current file will be copied to the backup folder before any changes.`)) return;
+    setMigratingId(plan.id);
+    setMigrationMessages((all) => ({ ...all, [plan.id]: "" }));
+    try {
+      const result = await api.post<MigrateCollegeLedgerResponse>(
+        `/api/529/ledger/${encodeURIComponent(plan.folderId)}/migrate`
+      );
+      const message = result.status === "already-current"
+        ? "Ledger is already on the current format."
+        : `Migrated ${result.migratedExpenses} expenses (${result.bankConversions} bank, ${result.fredConversions} FRED). Backup: ${result.backupFileName}`;
+      setMigrationMessages((all) => ({ ...all, [plan.id]: message }));
+    } catch (err: any) {
+      setMigrationMessages((all) => ({ ...all, [plan.id]: `Migration failed: ${err.message}` }));
+    } finally {
+      setMigratingId(null);
+    }
+  }
+
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
       <h2 style={heading}>529 Settings</h2>
       <p style={intro}>Each beneficiary has a separate OneDrive folder containing renamed receipts and an expenses.json ledger. These folder choices are saved only in this browser.</p>
 
       {plans.map((plan) => <div key={plan.id} style={card}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 10, alignItems: "end" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto auto", gap: 10, alignItems: "end" }}>
           <label style={label}>Beneficiary
             <input style={input} value={plan.name} onChange={(event) => onChange(plans.map((item) => item.id === plan.id ? { ...item, name: event.target.value } : item))} />
           </label>
@@ -32,8 +54,10 @@ export function CollegeSettings({ plans, onChange }: { plans: CollegePlan[]; onC
             <input style={{ ...input, background: "#f6f8fa" }} value={plan.folderName} readOnly />
           </label>
           <button style={secondaryBtn} onClick={() => setPickerFor(pickerFor === plan.id ? null : plan.id)}>Change folder</button>
+          <button disabled={migratingId !== null} style={{ ...secondaryBtn, opacity: migratingId === null ? 1 : .5 }} onClick={() => migrateLedger(plan)}>{migratingId === plan.id ? "Migrating…" : "Backup & migrate"}</button>
           <button style={dangerBtn} onClick={() => { if (window.confirm(`Remove the ${plan.name} plan from this browser? OneDrive files will not be deleted.`)) onChange(plans.filter((item) => item.id !== plan.id)); }}>Remove</button>
         </div>
+        {migrationMessages[plan.id] && <div style={{ marginTop: 10, fontSize: 12, color: migrationMessages[plan.id].startsWith("Migration failed") ? "#a40e26" : "#116329" }}>{migrationMessages[plan.id]}</div>}
         {pickerFor === plan.id && <div style={{ marginTop: 12 }}><DriveFolderPicker onChoose={chooseFolder} /></div>}
       </div>)}
 

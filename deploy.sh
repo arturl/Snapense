@@ -3,6 +3,17 @@
 # Prerequisites: az login, ENTRA_CLIENT_ID set
 set -euo pipefail
 
+# Load the ignored local configuration so secrets do not have to be placed on
+# the command line (where they can be retained in shell history).
+if [[ -f "packages/api/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "packages/api/.env"
+  set +a
+fi
+
+: "${ENTRA_CLIENT_ID:?Set ENTRA_CLIENT_ID in packages/api/.env or the environment}"
+
 ENV="${1:-dev}"
 RG="rg-snapense-${ENV}"
 ACR="acrsnapense${ENV}"
@@ -19,16 +30,18 @@ az acr build \
   .
 
 echo ""
-echo "=== Setting Azure OpenAI secrets ==="
-# Check if secrets already exist, add if not
+echo "=== Syncing application secrets ==="
 EXISTING_SECRETS=$(az containerapp secret list --name "${APP}" --resource-group "${RG}" --query "[].name" -o tsv 2>/dev/null || echo "")
 
-if [[ ! "${EXISTING_SECRETS}" == *"azure-openai-key"* ]] && [[ -n "${AZURE_OPENAI_API_KEY:-}" ]]; then
+if [[ -n "${AZURE_OPENAI_API_KEY:-}" ]]; then
   az containerapp secret set \
     --name "${APP}" \
     --resource-group "${RG}" \
     --secrets "azure-openai-key=${AZURE_OPENAI_API_KEY}"
+  EXISTING_SECRETS="${EXISTING_SECRETS} azure-openai-key"
+fi
 
+if [[ "${EXISTING_SECRETS}" == *"azure-openai-key"* ]]; then
   az containerapp update \
     --name "${APP}" \
     --resource-group "${RG}" \
@@ -36,6 +49,23 @@ if [[ ! "${EXISTING_SECRETS}" == *"azure-openai-key"* ]] && [[ -n "${AZURE_OPENA
       "AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}" \
       "AZURE_OPENAI_API_KEY=secretref:azure-openai-key" \
       "AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-5.4-nano}"
+fi
+
+if [[ -n "${FRED_API_KEY:-}" ]]; then
+  az containerapp secret set \
+    --name "${APP}" \
+    --resource-group "${RG}" \
+    --secrets "fred-api-key=${FRED_API_KEY}"
+  EXISTING_SECRETS="${EXISTING_SECRETS} fred-api-key"
+fi
+
+if [[ "${EXISTING_SECRETS}" == *"fred-api-key"* ]]; then
+  az containerapp update \
+    --name "${APP}" \
+    --resource-group "${RG}" \
+    --set-env-vars "FRED_API_KEY=secretref:fred-api-key"
+else
+  echo "Warning: FRED_API_KEY is not configured; GBP conversion will be unavailable."
 fi
 
 echo ""

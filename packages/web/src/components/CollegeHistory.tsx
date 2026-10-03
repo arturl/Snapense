@@ -5,7 +5,7 @@ import { api } from "../api/client";
 export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]; onOpenSettings: () => void }) {
   const [planId, setPlanId] = useState(plans[0]?.id || "");
   const plan = plans.find((item) => item.id === planId) || plans[0];
-  const [ledger, setLedger] = useState<CollegeExpenseLedger>({ version: 1, expenses: [] });
+  const [ledger, setLedger] = useState<CollegeExpenseLedger>({ version: 2, expenses: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [exportYear, setExportYear] = useState("all");
@@ -59,8 +59,20 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
 
   function exportCsv() {
     const expenses = exportYear === "all" ? ledger.expenses : ledger.expenses.filter((expense) => expense.date.startsWith(exportYear));
-    const headers = ["Year", "Date", "Fidelity transfer date", "Beneficiary payment date", "Beneficiary", "Merchant", "Amount", "Currency", "Items", "Description", "Receipt filename"];
-    const rows = expenses.map((expense) => [expense.date.slice(0, 4), expense.date, expense.fidelityTransferDate || "", expense.beneficiaryPaymentDate || "", expense.beneficiary, expense.merchant, expense.amount.toFixed(2), expense.currency, expense.items.join("; "), expense.description, expense.receiptFileName]);
+    const headers = ["Year", "Date", "Fidelity transfer date", "Beneficiary payment date", "Beneficiary", "Merchant", "Original amount", "Original currency", "USD amount", "USD currency", "Conversion method", "FX rate (USD per original currency)", "FX requested date", "FX effective date", "FX source", "Provider", "FRED series", "FX source URL", "FX retrieved at", "Items", "Description", "Receipt filename"];
+    const rows = expenses.map((expense) => [
+      expense.date.slice(0, 4), expense.date, expense.fidelityTransferDate || "", expense.beneficiaryPaymentDate || "",
+      expense.beneficiary, expense.merchant, (expense.originalAmount ?? expense.amount).toFixed(2),
+      expense.originalCurrency || expense.currency, expense.amount.toFixed(2), expense.currency,
+      expense.conversion?.method || "none", expense.conversion?.rate?.toString() || "",
+      expense.conversion?.method === "fred" ? expense.conversion.requestedDate : "",
+      expense.conversion?.effectiveDate || "", expense.conversion?.source || "",
+      expense.conversion?.method === "bank" ? expense.conversion.provider || "" : "",
+      expense.conversion?.method === "fred" ? expense.conversion.seriesId : "",
+      expense.conversion?.method === "fred" ? expense.conversion.sourceUrl : "",
+      expense.conversion?.method === "fred" ? expense.conversion.retrievedAt : "",
+      expense.items.join("; "), expense.description, expense.receiptFileName,
+    ]);
     const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
@@ -79,10 +91,16 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
     </div>
     {error && <div style={errorBox}>{error}</div>}
     {loading ? <div style={card}>Loading ledger…</div> : groups.length === 0 ? <div style={{ ...card, textAlign: "center", color: "#656d76", padding: 40 }}>No saved expenses for {plan.name} yet.</div> : groups.map(([year, expenses]) => {
-      const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+      const totals = expenses.reduce<Record<string, number>>((result, expense) => {
+        result[expense.currency] = (result[expense.currency] || 0) + expense.amount;
+        return result;
+      }, {});
+      const totalText = Object.entries(totals).map(([currency, total]) =>
+        total.toLocaleString("en-US", { style: "currency", currency })
+      ).join(" + ");
       return <section key={year} style={{ ...card, marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}><h3 style={{ margin: 0, fontSize: 18 }}>{year}</h3><span style={{ flex: 1 }} /><span style={{ color: "#656d76", fontSize: 13 }}>{expenses.length} expense{expenses.length === 1 ? "" : "s"} · {total.toLocaleString("en-US", { style: "currency", currency: expenses[0]?.currency || "USD" })}</span></div>
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={th}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Amount</th><th style={th}></th></tr></thead>
+        <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}><h3 style={{ margin: 0, fontSize: 18 }}>{year}</h3><span style={{ flex: 1 }} /><span style={{ color: "#656d76", fontSize: 13 }}>{expenses.length} expense{expenses.length === 1 ? "" : "s"} · {totalText}</span></div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={th}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={th}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
           <tbody>{expenses.map((expense) => {
             const editing = editingId === expense.id;
             return <tr key={expense.id}>
@@ -90,6 +108,14 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
               <td style={td}>{editing ? <input aria-label="Fidelity transfer date" type="date" style={dateInput} value={editDates.fidelityTransferDate} onChange={(event) => setEditDates((dates) => ({ ...dates, fidelityTransferDate: event.target.value }))} /> : expense.fidelityTransferDate || "—"}</td>
               <td style={td}>{editing ? <input aria-label="Beneficiary payment date" type="date" style={dateInput} value={editDates.beneficiaryPaymentDate} onChange={(event) => setEditDates((dates) => ({ ...dates, beneficiaryPaymentDate: event.target.value }))} /> : expense.beneficiaryPaymentDate || "—"}</td>
               <td style={td}>{expense.merchant}</td><td style={td}>{expense.items.join(", ")}</td><td style={td}>{expense.description}</td><td style={{ ...td, wordBreak: "break-all", color: "#656d76" }}>{expense.receiptFileName}</td>
+              <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{(expense.originalAmount ?? expense.amount).toFixed(2)} {expense.originalCurrency || expense.currency}</td>
+              <td style={{ ...td, whiteSpace: "nowrap", color: "#656d76", fontSize: 11 }}>{expense.conversion?.method === "fred" ? <>
+                {expense.conversion.rate} USD/{expense.originalCurrency}<br />
+                <a href={expense.conversion.sourceUrl} target="_blank" rel="noreferrer">FRED {expense.conversion.seriesId}</a> · {expense.conversion.effectiveDate}
+              </> : expense.conversion?.method === "bank" ? <>
+                {expense.conversion.rate.toFixed(8)} USD/{expense.originalCurrency}<br />
+                Actual bank charge{expense.conversion.provider ? ` · ${expense.conversion.provider}` : ""} · {expense.conversion.effectiveDate}
+              </> : "—"}</td>
               <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{expense.amount.toFixed(2)} {expense.currency}</td>
               <td style={{ ...td, whiteSpace: "nowrap" }}>{editing ? <><button style={smallPrimaryBtn} disabled={savingId === expense.id} onClick={() => saveDates(expense.id)}>{savingId === expense.id ? "Saving…" : "Save"}</button><button style={smallBtn} disabled={savingId === expense.id} onClick={() => setEditingId(null)}>Cancel</button></> : <button style={smallBtn} onClick={() => startEditing(expense)}>Edit dates</button>}</td>
             </tr>;

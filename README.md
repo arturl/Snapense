@@ -16,11 +16,14 @@ A web app that scans receipts from your OneDrive, uses AI to extract expense det
 1. In Settings, add a beneficiary and select a dedicated OneDrive folder
 2. Select receipt images or PDFs and scan them with the 529-specific prompt
 3. Review and edit the merchant, date, amount, currency, items, description, and optional Fidelity-transfer and beneficiary-payment dates
-4. Submit the reviewed expenses; renamed receipt copies and `expenses.json` are saved in the beneficiary's folder
-5. If an existing record has the same date and amount, explicitly cancel, replace it, or add another expense
-6. View saved expenses grouped by calendar year, update the two optional payment dates later, and export one row per expense to CSV
+4. For foreign-currency receipts, choose the actual USD amount charged by a bank/card or use the latest Federal Reserve H.10 observation on or before the expense date. The original amount and conversion evidence are retained for audit support
+5. Submit the reviewed expenses; renamed receipt copies and `expenses.json` are saved in the beneficiary's folder
+6. If an existing record has the same date, original amount, and original currency, explicitly cancel, replace it, or add another expense
+7. View saved expenses grouped by calendar year, update the two optional payment dates later, and export one row per expense to CSV
 
 Beneficiary/folder settings are stored in browser `localStorage`. Expense records remain in OneDrive; no database is used. Use a separate folder for each beneficiary.
+
+Version-1 ledgers can be upgraded from Settings with **Backup & migrate**. Snapense first saves and verifies the unchanged ledger under `backup/expenses-before-v2-<timestamp>.json`; only then does it replace `expenses.json`. Legacy descriptions containing `Cost in USD per credit card transaction: $...` are migrated as actual bank charges. Other legacy foreign-currency entries use FRED.
 
 **PDF receipts** have their text extracted and sent to GPT. **Image receipts** (JPEG, PNG, etc.) are sent directly via the vision API.
 
@@ -56,6 +59,7 @@ ENTRA_CLIENT_ID=<your-client-id>
 AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
 AZURE_OPENAI_API_KEY=<your-key>
 AZURE_OPENAI_DEPLOYMENT=gpt-5.4-nano
+FRED_API_KEY=<your-key>
 
 # packages/web/.env
 VITE_ENTRA_CLIENT_ID=<your-client-id>
@@ -79,7 +83,7 @@ az group create -n rg-snapense-dev -l westus2
 az deployment group create -g rg-snapense-dev -f infra/main.bicep -p infra/main.bicepparam
 
 # Subsequent deploys
-ENTRA_CLIENT_ID=<id> AZURE_OPENAI_API_KEY=<key> ./deploy.sh
+./deploy.sh dev
 ```
 
-Deploys to Azure Container Apps via ACR. The app runs on port 8080 in production and serves the React SPA from the Express server.
+The deploy script reads the ignored `packages/api/.env`, stores API keys as Azure Container Apps secrets, and exposes them to the container through secret references. Deploys use ACR; the app runs on port 8080 and serves the React SPA from Express.
