@@ -7,6 +7,7 @@ import {
   downloadFolderFile,
   ensureChildFolder,
   getDriveItem,
+  getFolderChildByName,
   getUniqueFileName,
   uploadToFolder,
 } from "../services/graph.js";
@@ -283,6 +284,29 @@ router.get("/api/529/ledger/:folderId", requireAuth, async (req: Request, res: R
     res.json(await readLedger(accessToken, folderId));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/api/529/receipt-link/:folderId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { accessToken } = req as AuthenticatedRequest;
+    const folderId = Array.isArray(req.params.folderId) ? req.params.folderId[0] : req.params.folderId;
+    const fileName = typeof req.query.name === "string" ? req.query.name : "";
+    if (!fileName) {
+      res.status(400).json({ error: "Receipt filename is required" });
+      return;
+    }
+
+    await assertFolder(accessToken, folderId);
+    const receipt = await getFolderChildByName(accessToken, folderId, fileName);
+    if (!receipt?.file || !receipt.webUrl) {
+      res.status(404).json({ error: "Receipt file was not found in the configured OneDrive folder" });
+      return;
+    }
+    res.json({ webUrl: receipt.webUrl as string });
+  } catch (err: any) {
+    console.error("529 receipt link error:", err);
+    res.status(500).json({ error: err?.message || "Could not open receipt" });
   }
 });
 

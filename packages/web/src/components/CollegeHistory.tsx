@@ -57,6 +57,25 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
     finally { setSavingId(null); }
   }
 
+  async function openReceipt(expense: CollegeExpense) {
+    const receiptWindow = window.open("about:blank", "_blank");
+    setError("");
+    try {
+      const result = await api.get<{ webUrl: string }>(
+        `/api/529/receipt-link/${encodeURIComponent(plan.folderId)}?name=${encodeURIComponent(expense.receiptFileName)}`
+      );
+      if (receiptWindow) {
+        receiptWindow.opener = null;
+        receiptWindow.location.replace(result.webUrl);
+      } else {
+        window.location.assign(result.webUrl);
+      }
+    } catch (err: any) {
+      receiptWindow?.close();
+      setError(err.message);
+    }
+  }
+
   function exportCsv() {
     const expenses = exportYear === "all" ? ledger.expenses : ledger.expenses.filter((expense) => expense.date.startsWith(exportYear));
     const headers = ["Year", "Date", "Fidelity transfer date", "Beneficiary payment date", "Beneficiary", "Merchant", "Original amount", "Original currency", "USD amount", "USD currency", "Conversion method", "FX rate (USD per original currency)", "FX requested date", "FX effective date", "FX source", "Provider", "FRED series", "FX source URL", "FX retrieved at", "Items", "Description", "Receipt filename"];
@@ -100,16 +119,16 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
       ).join(" + ");
       return <section key={year} style={{ ...card, marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}><h3 style={{ margin: 0, fontSize: 18 }}>{year}</h3><span style={{ flex: 1 }} /><span style={{ color: "#656d76", fontSize: 13 }}>{expenses.length} expense{expenses.length === 1 ? "" : "s"} · {totalText}</span></div>
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={th}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={th}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={{ ...th, minWidth: 300 }}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={{ ...th, width: 150 }}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
           <tbody>{expenses.map((expense) => {
             const editing = editingId === expense.id;
             return <tr key={expense.id}>
               <td style={td}>{expense.date}</td>
               <td style={td}>{editing ? <input aria-label="Fidelity transfer date" type="date" style={dateInput} value={editDates.fidelityTransferDate} onChange={(event) => setEditDates((dates) => ({ ...dates, fidelityTransferDate: event.target.value }))} /> : expense.fidelityTransferDate || "—"}</td>
               <td style={td}>{editing ? <input aria-label="Beneficiary payment date" type="date" style={dateInput} value={editDates.beneficiaryPaymentDate} onChange={(event) => setEditDates((dates) => ({ ...dates, beneficiaryPaymentDate: event.target.value }))} /> : expense.beneficiaryPaymentDate || "—"}</td>
-              <td style={td}>{expense.merchant}</td><td style={td}>{expense.items.join(", ")}</td><td style={td}>{expense.description}</td><td style={{ ...td, wordBreak: "break-all", color: "#656d76" }}>{expense.receiptFileName}</td>
+              <td style={td}>{expense.merchant}</td><td style={td}>{expense.items.join(", ")}</td><td style={{ ...td, minWidth: 300 }}>{expense.description}</td><td style={td}><button type="button" style={receiptLink} title={expense.receiptFileName} onClick={() => openReceipt(expense)}>View receipt</button></td>
               <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{(expense.originalAmount ?? expense.amount).toFixed(2)} {expense.originalCurrency || expense.currency}</td>
-              <td style={{ ...td, whiteSpace: "nowrap", color: "#656d76", fontSize: 11 }}>{expense.conversion?.method === "fred" ? <>
+              <td style={{ ...td, width: 150, maxWidth: 150, whiteSpace: "normal", overflowWrap: "anywhere", color: "#656d76", fontSize: 11 }}>{expense.conversion?.method === "fred" ? <>
                 {expense.conversion.rate} USD/{expense.originalCurrency}<br />
                 <a href={expense.conversion.sourceUrl} target="_blank" rel="noreferrer">FRED {expense.conversion.seriesId}</a> · {expense.conversion.effectiveDate}
               </> : expense.conversion?.method === "bank" ? <>
@@ -136,6 +155,7 @@ const primaryBtn: React.CSSProperties = { padding: "7px 14px", border: "1px soli
 const smallBtn: React.CSSProperties = { padding: "5px 8px", border: "1px solid #d1d9e0", borderRadius: 6, background: "#f6f8fa", color: "#1f2328", cursor: "pointer", fontSize: 11, marginLeft: 5 };
 const smallPrimaryBtn: React.CSSProperties = { ...smallBtn, borderColor: "#0860ca", background: "#0969da", color: "#fff" };
 const dateInput: React.CSSProperties = { border: "1px solid #d1d9e0", borderRadius: 6, padding: "5px 6px", fontSize: 12 };
+const receiptLink: React.CSSProperties = { border: 0, background: "none", color: "#0969da", cursor: "pointer", padding: 0, font: "inherit", whiteSpace: "nowrap", textDecoration: "underline" };
 const th: React.CSSProperties = { padding: "8px", borderBottom: "1px solid #d1d9e0", textAlign: "left", fontSize: 12 };
 const td: React.CSSProperties = { padding: "9px 8px", borderBottom: "1px solid #eaeef2", verticalAlign: "top" };
 const errorBox: React.CSSProperties = { background: "#ffebe9", border: "1px solid #ffcecb", color: "#a40e26", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 };
