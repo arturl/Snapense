@@ -172,7 +172,7 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
       ).join(" + ");
       return <section key={year} style={{ ...card, marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}><h3 style={{ margin: 0, fontSize: 18 }}>{year}</h3><span style={{ flex: 1 }} /><span style={{ color: "#656d76", fontSize: 13 }}>{expenses.length} expense{expenses.length === 1 ? "" : "s"} · {totalText}</span></div>
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={{ ...th, width: 34 }}>Select</th><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={{ ...th, minWidth: 300 }}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={{ ...th, width: 150 }}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={{ ...th, width: 34 }}>Select</th><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={{ ...th, minWidth: 300 }}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={{ ...th, width: 150 }}>FX audit</th><th style={{ ...th, textAlign: "right", minWidth: 110, whiteSpace: "nowrap" }}>USD amount</th><th style={{ ...th, minWidth: 72 }}>Actions</th></tr></thead>
           <tbody>{expenses.map((expense) => {
             return <tr key={expense.id}>
               <td style={td}><input aria-label={`Select ${expense.description}`} type="checkbox" checked={selectedIds.has(expense.id)} onChange={() => toggleSelected(expense.id)} /></td>
@@ -188,8 +188,8 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
                 {expense.conversion.rate.toFixed(8)} USD/{expense.originalCurrency}<br />
                 Actual bank charge{expense.conversion.provider ? ` · ${expense.conversion.provider}` : ""} · {expense.conversion.effectiveDate}
               </> : "—"}</td>
-              <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{expense.amount.toFixed(2)} {expense.currency}</td>
-              <td style={{ ...td, whiteSpace: "nowrap", position: "sticky", right: 0, background: "#fff" }}>
+              <td style={{ ...td, textAlign: "right", minWidth: 110, whiteSpace: "nowrap" }}>{expense.amount.toFixed(2)} {expense.currency}</td>
+              <td style={{ ...td, minWidth: 72, whiteSpace: "nowrap" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <button style={{ ...smallBtn, marginLeft: 0 }} disabled={deletingId !== null} onClick={() => setEditingExpense(expense)}>Edit</button>
                   <button style={{ ...smallBtn, marginLeft: 0, color: "#cf222e" }} disabled={deletingId !== null} onClick={() => deleteExpense(expense)}>{deletingId === expense.id ? "Deleting…" : "Delete"}</button>
