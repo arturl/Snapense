@@ -21,7 +21,7 @@ function sortByCreatedDesc(data: any): any {
 
 export async function listDriveRoot(accessToken: string): Promise<any> {
   const res = await fetch(
-    `${GRAPH_BASE}/me/drive/root/children?$top=200`,
+    `${GRAPH_BASE}/me/drive/root/children?$top=200&$expand=thumbnails`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (!res.ok) throw new Error(`Graph API error: ${res.status} ${await res.text()}`);
@@ -33,7 +33,7 @@ export async function listDriveFolder(
   folderId: string
 ): Promise<any> {
   const res = await fetch(
-    `${GRAPH_BASE}/me/drive/items/${folderId}/children?$top=200`,
+    `${GRAPH_BASE}/me/drive/items/${folderId}/children?$top=200&$expand=thumbnails`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (!res.ok) throw new Error(`Graph API error: ${res.status} ${await res.text()}`);
@@ -127,10 +127,11 @@ export async function uploadToExpenses(
 export async function getFolderChildByName(
   accessToken: string,
   folderId: string,
-  fileName: string
+  fileName: string,
+  includeThumbnails = false
 ): Promise<any | null> {
   const res = await fetch(
-    `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}`,
+    `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}${includeThumbnails ? "?$expand=thumbnails" : ""}`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (res.status === 404) return null;
@@ -191,19 +192,28 @@ export async function uploadToFolder(
   folderId: string,
   fileName: string,
   content: Buffer,
-  contentType = "application/octet-stream"
+  contentType = "application/octet-stream",
+  expectedVersion?: { id: string; eTag: string }
 ): Promise<any> {
   const res = await fetch(
-    `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}:/content`,
+    expectedVersion
+      ? `${GRAPH_BASE}/me/drive/items/${encodeURIComponent(expectedVersion.id)}/content`
+      : `${GRAPH_BASE}/me/drive/items/${folderId}:/${encodeURIComponent(fileName)}:/content`,
     {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": contentType,
+        ...(expectedVersion ? { "If-Match": expectedVersion.eTag } : {}),
       },
       body: content,
     }
   );
+  if (res.status === 412) {
+    const error = new Error("The ledger changed in another session. Reload history and apply your edit again.");
+    Object.assign(error, { status: 409 });
+    throw error;
+  }
   if (!res.ok) throw new Error(`Upload error: ${res.status} ${await res.text()}`);
   return res.json();
 }

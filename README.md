@@ -23,6 +23,12 @@ A web app that scans receipts from your OneDrive, uses AI to extract expense det
 
 Beneficiary/folder settings are stored in browser `localStorage`. Expense records remain in OneDrive; no database is used. Use a separate folder for each beneficiary.
 
+History is sorted by expense date, newest first. **Edit** opens the same expense fields used during submission. **Delete** asks for confirmation and removes only the ledger entry; the receipt file remains in OneDrive. Image receipts have thumbnails and enlarged previews; history also supports first-page PDF previews.
+
+The API validates the complete ledger on read and the serialized JSON before every ledger write. Editing and deleting preserve unrelated records and unknown JSON fields, reject stale entries, and use the OneDrive file version to guard the final write against concurrent changes. These operations preserve receipt filenames.
+
+Run the ledger validation and mocked OneDrive integration tests with `npm run test:api`. The tests do not modify real OneDrive data.
+
 Version-1 ledgers can be upgraded from Settings with **Backup & migrate**. Snapense first saves and verifies the unchanged ledger under `backup/expenses-before-v2-<timestamp>.json`; only then does it replace `expenses.json`. Legacy descriptions containing `Cost in USD per credit card transaction: $...` are migrated as actual bank charges. Other legacy foreign-currency entries use FRED.
 
 **PDF receipts** have their text extracted and sent to GPT. **Image receipts** (JPEG, PNG, etc.) are sent directly via the vision API.

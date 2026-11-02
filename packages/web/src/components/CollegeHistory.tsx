@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import type { BulkUpdateCollegeExpenseDatesResponse, CollegeExpense, CollegeExpenseLedger, CollegePlan, UpdateCollegeExpenseDatesResponse } from "@snapense/shared";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { BulkUpdateCollegeExpenseDatesResponse, CollegeExpense, CollegeExpenseDraft, CollegeExpenseLedger, CollegePlan, ConvertCollegeExpenseResponse, DeleteCollegeExpenseResponse, UpdateCollegeExpenseResponse } from "@snapense/shared";
 import { api } from "../api/client";
+import { ImagePreview } from "./ImagePreview";
+import { CollegeExpenseEditor, isDraftComplete } from "./CollegeExpenseEditor";
 
 export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]; onOpenSettings: () => void }) {
   const [planId, setPlanId] = useState(plans[0]?.id || "");
@@ -9,13 +11,13 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [exportYear, setExportYear] = useState("all");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDates, setEditDates] = useState({ fidelityTransferDate: "", beneficiaryPaymentDate: "" });
-  const [savingId, setSavingId] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<CollegeExpense | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [receipt, setReceipt] = useState<CollegeExpense | null>(null);
 
   useEffect(() => {
     if (!plan) return;
@@ -26,7 +28,8 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
 
   const groups = useMemo(() => {
     const result = new Map<string, CollegeExpense[]>();
-    for (const expense of ledger.expenses) {
+    const sortedExpenses = [...ledger.expenses].sort((a, b) => b.date.localeCompare(a.date));
+    for (const expense of sortedExpenses) {
       const year = expense.date.slice(0, 4) || "Unknown";
       result.set(year, [...(result.get(year) || []), expense]);
     }
@@ -39,48 +42,22 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
 
   if (!plan) return <div style={card}><h2 style={{ marginTop: 0 }}>No 529 plans configured</h2><button style={primaryBtn} onClick={onOpenSettings}>Open Settings</button></div>;
 
-  function startEditing(expense: CollegeExpense) {
-    setEditingId(expense.id);
-    setEditDates({
-      fidelityTransferDate: expense.fidelityTransferDate || "",
-      beneficiaryPaymentDate: expense.beneficiaryPaymentDate || "",
-    });
-    setError("");
+  function openReceipt(expense: CollegeExpense) {
+    setReceipt(expense);
   }
 
-  async function saveDates(expenseId: string) {
-    setSavingId(expenseId); setError("");
+  async function deleteExpense(expense: CollegeExpense) {
+    if (deletingId || !window.confirm(`Delete this expense from history?\n\n${expense.date} · ${expense.description}\n${formatMoney(expense.originalAmount ?? expense.amount, expense.originalCurrency || expense.currency)}\n\nThe receipt file will remain in OneDrive.`)) return;
+    setDeletingId(expense.id); setError("");
     try {
-      const data = await api.patch<UpdateCollegeExpenseDatesResponse>(
-        `/api/529/ledger/${encodeURIComponent(plan.folderId)}/expense/${encodeURIComponent(expenseId)}`,
-        editDates
+      const result = await api.delete<DeleteCollegeExpenseResponse>(
+        `/api/529/ledger/${encodeURIComponent(plan.folderId)}/expense/${encodeURIComponent(expense.id)}`,
+        { expectedExpense: expense }
       );
-      setLedger((current) => ({
-        ...current,
-        expenses: current.expenses.map((expense) => expense.id === expenseId ? data.expense : expense),
-      }));
-      setEditingId(null);
+      setLedger((current) => ({ ...current, expenses: current.expenses.filter((item) => item.id !== result.deletedId) }));
+      setSelectedIds((current) => { const next = new Set(current); next.delete(result.deletedId); return next; });
     } catch (err: any) { setError(err.message); }
-    finally { setSavingId(null); }
-  }
-
-  async function openReceipt(expense: CollegeExpense) {
-    const receiptWindow = window.open("about:blank", "_blank");
-    setError("");
-    try {
-      const result = await api.get<{ webUrl: string }>(
-        `/api/529/receipt-link/${encodeURIComponent(plan.folderId)}?name=${encodeURIComponent(expense.receiptFileName)}`
-      );
-      if (receiptWindow) {
-        receiptWindow.opener = null;
-        receiptWindow.location.replace(result.webUrl);
-      } else {
-        window.location.assign(result.webUrl);
-      }
-    } catch (err: any) {
-      receiptWindow?.close();
-      setError(err.message);
-    }
+    finally { setDeletingId(null); }
   }
 
   function toggleSelected(expenseId: string) {
@@ -178,7 +155,7 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
   return <div>
     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
       <h2 style={{ margin: 0, fontSize: 20 }}>529 expense history</h2><span style={{ flex: 1 }} />
-      <label style={label}>Beneficiary <select style={select} value={plan.id} onChange={(event) => { setPlanId(event.target.value); setExportYear("all"); setEditingId(null); }}>{plans.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label style={label}>Beneficiary <select style={select} disabled={deletingId !== null} value={plan.id} onChange={(event) => { setPlanId(event.target.value); setExportYear("all"); setEditingExpense(null); }}>{plans.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label style={label}>CSV period <select style={select} value={exportYear} onChange={(event) => setExportYear(event.target.value)}><option value="all">All years</option>{years.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
       <button style={{ ...primaryBtn, opacity: ledger.expenses.length ? 1 : .5 }} disabled={!ledger.expenses.length} onClick={exportCsv}>Export CSV</button>
       <button style={{ ...primaryBtn, opacity: selectedExpenses.length && !summaryBusy ? 1 : .5 }} disabled={!selectedExpenses.length || summaryBusy} onClick={createSummary}>{summaryBusy ? "Updating dates…" : `Create reimbursement summary${selectedExpenses.length ? ` (${selectedExpenses.length})` : ""}`}</button>
@@ -197,15 +174,14 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
         <div style={{ display: "flex", alignItems: "baseline", marginBottom: 10 }}><h3 style={{ margin: 0, fontSize: 18 }}>{year}</h3><span style={{ flex: 1 }} /><span style={{ color: "#656d76", fontSize: 13 }}>{expenses.length} expense{expenses.length === 1 ? "" : "s"} · {totalText}</span></div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr><th style={{ ...th, width: 34 }}>Select</th><th style={th}>Expense date</th><th style={th}>Fidelity transfer</th><th style={th}>Paid to beneficiary</th><th style={th}>Merchant</th><th style={th}>Items</th><th style={{ ...th, minWidth: 300 }}>Description</th><th style={th}>Receipt</th><th style={{ ...th, textAlign: "right" }}>Original</th><th style={{ ...th, width: 150 }}>FX audit</th><th style={{ ...th, textAlign: "right" }}>USD amount</th><th style={th}></th></tr></thead>
           <tbody>{expenses.map((expense) => {
-            const editing = editingId === expense.id;
             return <tr key={expense.id}>
               <td style={td}><input aria-label={`Select ${expense.description}`} type="checkbox" checked={selectedIds.has(expense.id)} onChange={() => toggleSelected(expense.id)} /></td>
               <td style={td}>{expense.date}</td>
-              <td style={td}>{editing ? <input aria-label="Fidelity transfer date" type="date" style={dateInput} value={editDates.fidelityTransferDate} onChange={(event) => setEditDates((dates) => ({ ...dates, fidelityTransferDate: event.target.value }))} /> : expense.fidelityTransferDate || "—"}</td>
-              <td style={td}>{editing ? <input aria-label="Beneficiary payment date" type="date" style={dateInput} value={editDates.beneficiaryPaymentDate} onChange={(event) => setEditDates((dates) => ({ ...dates, beneficiaryPaymentDate: event.target.value }))} /> : expense.beneficiaryPaymentDate || "—"}</td>
+              <td style={td}>{expense.fidelityTransferDate || "—"}</td>
+              <td style={td}>{expense.beneficiaryPaymentDate || "—"}</td>
               <td style={td}>{expense.merchant}</td><td style={td}>{expense.items.join(", ")}</td><td style={{ ...td, minWidth: 300 }}>{expense.description}</td><td style={td}><button type="button" style={receiptLink} title={expense.receiptFileName} onClick={() => openReceipt(expense)}>View receipt</button></td>
               <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{(expense.originalAmount ?? expense.amount).toFixed(2)} {expense.originalCurrency || expense.currency}</td>
-              <td style={{ ...td, width: 150, maxWidth: 150, whiteSpace: "normal", overflowWrap: "anywhere", color: "#656d76", fontSize: 11 }}>{expense.conversion?.method === "fred" ? <>
+              <td style={{ ...td, width: 150, minWidth: 150, maxWidth: 150, whiteSpace: "normal", overflowWrap: "anywhere", color: "#656d76", fontSize: 11 }}>{expense.conversion?.method === "fred" ? <>
                 {expense.conversion.rate} USD/{expense.originalCurrency}<br />
                 <a href={expense.conversion.sourceUrl} target="_blank" rel="noreferrer">FRED {expense.conversion.seriesId}</a> · {expense.conversion.effectiveDate}
               </> : expense.conversion?.method === "bank" ? <>
@@ -213,12 +189,23 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
                 Actual bank charge{expense.conversion.provider ? ` · ${expense.conversion.provider}` : ""} · {expense.conversion.effectiveDate}
               </> : "—"}</td>
               <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{expense.amount.toFixed(2)} {expense.currency}</td>
-              <td style={{ ...td, whiteSpace: "nowrap" }}>{editing ? <><button style={smallPrimaryBtn} disabled={savingId === expense.id} onClick={() => saveDates(expense.id)}>{savingId === expense.id ? "Saving…" : "Save"}</button><button style={smallBtn} disabled={savingId === expense.id} onClick={() => setEditingId(null)}>Cancel</button></> : <button style={smallBtn} onClick={() => startEditing(expense)}>Edit dates</button>}</td>
+              <td style={{ ...td, whiteSpace: "nowrap", position: "sticky", right: 0, background: "#fff" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <button style={{ ...smallBtn, marginLeft: 0 }} disabled={deletingId !== null} onClick={() => setEditingExpense(expense)}>Edit</button>
+                  <button style={{ ...smallBtn, marginLeft: 0, color: "#cf222e" }} disabled={deletingId !== null} onClick={() => deleteExpense(expense)}>{deletingId === expense.id ? "Deleting…" : "Delete"}</button>
+                </div>
+              </td>
             </tr>;
           })}</tbody>
         </table></div>
       </section>;
     })}
+    {editingExpense && <EditExpenseDialog key={`${plan.folderId}:${editingExpense.id}`} expense={editingExpense} folderId={plan.folderId}
+      onClose={() => setEditingExpense(null)} onSaved={(updated) => {
+        setLedger((current) => ({ ...current, expenses: current.expenses.map((expense) => expense.id === updated.id ? updated : expense) }));
+        setEditingExpense(null);
+      }} />}
+    {receipt && <HistoryReceiptPreview key={`${plan.folderId}:${receipt.id}`} folderId={plan.folderId} name={receipt.receiptFileName} onClose={() => setReceipt(null)} />}
     {summaryOpen && selectedExpenses.length > 0 && <ReimbursementSummary
       beneficiary={plan.name}
       expenses={selectedExpenses}
@@ -228,6 +215,104 @@ export function CollegeHistory({ plans, onOpenSettings }: { plans: CollegePlan[]
       onClose={() => setSummaryOpen(false)}
     />}
   </div>;
+}
+
+function EditExpenseDialog({ expense, folderId, onClose, onSaved }: { expense: CollegeExpense; folderId: string; onClose: () => void; onSaved: (expense: CollegeExpense) => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [draft, setDraft] = useState<CollegeExpenseDraft>(() => ({
+    id: expense.id,
+    sourceFileId: expense.id,
+    originalName: expense.receiptFileName,
+    date: expense.date,
+    merchant: expense.merchant,
+    amount: String(expense.originalAmount ?? expense.amount),
+    currency: expense.originalCurrency || expense.currency,
+    usdAmount: String(expense.amount),
+    conversionMethod: expense.conversion?.method || ((expense.originalCurrency || expense.currency) === "USD" ? "none" : "fred"),
+    conversion: expense.conversion,
+    bankProvider: expense.conversion?.method === "bank" ? expense.conversion.provider || "" : "",
+    bankEffectiveDate: expense.conversion?.method === "bank" ? expense.conversion.effectiveDate : "",
+    items: [...expense.items],
+    description: expense.description,
+    fidelityTransferDate: expense.fidelityTransferDate || "",
+    beneficiaryPaymentDate: expense.beneficiaryPaymentDate || "",
+    proposedFileName: expense.receiptFileName,
+    status: "success",
+  }));
+  const [saving, setSaving] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+
+  function updateDraft(changes: Partial<CollegeExpenseDraft>) {
+    const invalidatesConversion = "date" in changes || "amount" in changes || "currency" in changes || "conversionMethod" in changes;
+    setDraft((current) => {
+      const updated = { ...current, ...changes };
+      if (invalidatesConversion) {
+        updated.usdAmount = updated.currency.toUpperCase() === "USD" ? updated.amount : undefined;
+        updated.conversion = undefined;
+        updated.conversionError = undefined;
+      }
+      return updated;
+    });
+    setError("");
+  }
+
+  async function refreshConversion() {
+    setConverting(true);
+    try {
+      const result = await api.post<ConvertCollegeExpenseResponse>("/api/529/convert", { amount: draft.amount, currency: draft.currency, date: draft.date });
+      setDraft((current) => ({ ...current, ...result, conversionError: undefined }));
+    } catch (err: any) {
+      setDraft((current) => ({ ...current, usdAmount: undefined, conversion: undefined, conversionError: err.message }));
+    } finally { setConverting(false); }
+  }
+
+  async function save() {
+    if (!isDraftComplete(draft) || saving || converting) return;
+    setSaving(true); setError("");
+    try {
+      const result = await api.patch<UpdateCollegeExpenseResponse>(
+        `/api/529/ledger/${encodeURIComponent(folderId)}/expense/${encodeURIComponent(expense.id)}`, { draft, expectedExpense: expense }
+      );
+      onSaved(result.expense);
+    } catch (err: any) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  return <dialog ref={dialog} aria-labelledby="edit-expense-title" onCancel={(event) => { if (saving) event.preventDefault(); }} onClose={() => { if (!dialog.current?.open) onClose(); }}
+    style={{ width: "min(760px, 90vw)", maxHeight: "90vh", padding: 20, border: "1px solid #d1d9e0", borderRadius: 8, boxShadow: "0 12px 48px #0004" }}>
+    <h2 id="edit-expense-title" style={{ margin: "0 0 14px", fontSize: 20 }}>Edit expense</h2>
+    <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <fieldset disabled={saving || converting} style={{ margin: 0, padding: 0, border: 0, minWidth: 0 }}>
+        <CollegeExpenseEditor draft={draft} converting={converting} onChange={updateDraft} onConvert={refreshConversion} receiptFileName={expense.receiptFileName} />
+      </fieldset>
+      {error && <div style={errorBox} role="alert">{error}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button type="button" style={smallBtn} disabled={saving} onClick={onClose}>Cancel</button>
+        <button type="submit" style={primaryBtn} disabled={saving || converting || !isDraftComplete(draft)}>{saving ? "Saving…" : "Save changes"}</button>
+      </div>
+    </form>
+  </dialog>;
+}
+
+function HistoryReceiptPreview({ folderId, name, onClose }: { folderId: string; name: string; onClose: () => void }) {
+  const [result, setResult] = useState<{ webUrl: string; previewUrl: string | null } | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    api.get<{ webUrl: string; previewUrl: string | null }>(
+      `/api/529/receipt-link/${encodeURIComponent(folderId)}?name=${encodeURIComponent(name)}`
+    ).then((data) => { if (active) setResult(data); })
+      .catch((err) => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, [folderId, name]);
+  return <ImagePreview name={name} url={result?.previewUrl || undefined} webUrl={result?.webUrl} loading={!result && !error} error={error} onClose={onClose} />;
 }
 
 function ReimbursementSummary({ beneficiary, expenses, copyMessage, onCopy, onCopySubject, onClose }: {
@@ -334,8 +419,6 @@ const label: React.CSSProperties = { display: "flex", alignItems: "center", gap:
 const select: React.CSSProperties = { border: "1px solid #d1d9e0", borderRadius: 6, padding: "6px 8px", background: "#fff" };
 const primaryBtn: React.CSSProperties = { padding: "7px 14px", border: "1px solid #0860ca", borderRadius: 6, background: "#0969da", color: "#fff", cursor: "pointer", fontWeight: 600 };
 const smallBtn: React.CSSProperties = { padding: "5px 8px", border: "1px solid #d1d9e0", borderRadius: 6, background: "#f6f8fa", color: "#1f2328", cursor: "pointer", fontSize: 11, marginLeft: 5 };
-const smallPrimaryBtn: React.CSSProperties = { ...smallBtn, borderColor: "#0860ca", background: "#0969da", color: "#fff" };
-const dateInput: React.CSSProperties = { border: "1px solid #d1d9e0", borderRadius: 6, padding: "5px 6px", fontSize: 12 };
 const receiptLink: React.CSSProperties = { border: 0, background: "none", color: "#0969da", cursor: "pointer", padding: 0, font: "inherit", whiteSpace: "nowrap", textDecoration: "underline" };
 const modalOverlay: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(31, 35, 40, .45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 };
 const modalCard: React.CSSProperties = { width: "min(820px, 95vw)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 8, boxShadow: "0 12px 36px rgba(0, 0, 0, .25)", padding: 20 };

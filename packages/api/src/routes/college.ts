@@ -16,6 +16,7 @@ import {
   extractCollegeExpenseFromPdf,
 } from "../services/ocr.js";
 import { convertToUsd } from "../services/exchangeRates.js";
+import { parseStoredLedger, serializeLedger } from "../services/ledger.js";
 import {
   formatCollegeExpenseFilename,
   type BulkUpdateCollegeExpenseDatesRequest,
@@ -54,26 +55,22 @@ async function readLedger(accessToken: string, folderId: string): Promise<Colleg
 }
 
 function parseLedger(content: Buffer): CollegeExpenseLedger {
-  try {
-    const parsed = JSON.parse(content.toString("utf8"));
-    if (![1, 2].includes(parsed?.version) || !Array.isArray(parsed.expenses)) throw new Error();
-    return parsed as CollegeExpenseLedger;
-  } catch {
-    throw new Error(`${LEDGER_NAME} is not a valid Snapense 529 ledger. Fix or rename it before submitting.`);
-  }
+  return parseStoredLedger(content);
 }
 
 async function writeLedger(
   accessToken: string,
   folderId: string,
-  ledger: CollegeExpenseLedger
+  ledger: CollegeExpenseLedger,
+  expectedVersion?: { id: string; eTag: string }
 ): Promise<void> {
   await uploadToFolder(
     accessToken,
     folderId,
     LEDGER_NAME,
-    Buffer.from(JSON.stringify(ledger, null, 2) + "\n", "utf8"),
-    "application/json"
+    serializeLedger(ledger),
+    "application/json",
+    expectedVersion
   );
 }
 
@@ -86,9 +83,10 @@ function validDraft(draft: CollegeExpenseDraft): boolean {
   return Boolean(
     draft?.id && draft.sourceFileId && draft.status === "success" &&
     /^\d{4}-\d{2}-\d{2}$/.test(draft.date) &&
-    draft.merchant.trim() && draft.description.trim() &&
-    /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
-    Array.isArray(draft.items) && draft.items.some((item) => item.trim()) &&
+    typeof draft.merchant === "string" && draft.merchant.trim() &&
+    typeof draft.description === "string" && draft.description.trim() &&
+    typeof draft.currency === "string" && /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
+    Array.isArray(draft.items) && draft.items.every((item) => typeof item === "string") && draft.items.some((item) => item.trim()) &&
     Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0 &&
     ["none", "fred", "bank"].includes(draft.conversionMethod) &&
     validOptionalDate(draft.bankEffectiveDate) &&
@@ -300,12 +298,17 @@ router.get("/api/529/receipt-link/:folderId", requireAuth, async (req: Request, 
     }
 
     await assertFolder(accessToken, folderId);
-    const receipt = await getFolderChildByName(accessToken, folderId, fileName);
+    const receipt = await getFolderChildByName(accessToken, folderId, fileName, true);
     if (!receipt?.file || !receipt.webUrl) {
       res.status(404).json({ error: "Receipt file was not found in the configured OneDrive folder" });
       return;
     }
-    res.json({ webUrl: receipt.webUrl as string });
+    const thumbnail = receipt.thumbnails?.[0];
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      webUrl: receipt.webUrl as string,
+      previewUrl: thumbnail?.large?.url || thumbnail?.medium?.url || thumbnail?.small?.url || null,
+    });
   } catch (err: any) {
     console.error("529 receipt link error:", err);
     res.status(500).json({ error: err?.message || "Could not open receipt" });
@@ -490,7 +493,7 @@ router.post("/api/529/submit", requireAuth, async (req: Request, res: Response) 
   }
 });
 
-/** Update the two optional fund-movement dates on a saved expense. */
+/** Update a reviewed saved expense; also accepts the legacy dates-only body. */
 router.patch("/api/529/ledger/:folderId/expense/:expenseId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { accessToken } = req as AuthenticatedRequest;
@@ -505,6 +508,11 @@ router.patch("/api/529/ledger/:folderId/expense/:expenseId", requireAuth, async 
     }
 
     await assertFolder(accessToken, folderId);
+    const ledgerFile = await getFolderChildByName(accessToken, folderId, LEDGER_NAME);
+    if (!ledgerFile?.id || !ledgerFile.eTag) {
+      res.status(409).json({ error: "Could not determine the ledger version. Reload history before editing." });
+      return;
+    }
     const ledger = await readLedger(accessToken, folderId);
     const expense = ledger.expenses.find((item) => item.id === expenseId);
     if (!expense) {
@@ -512,14 +520,98 @@ router.patch("/api/529/ledger/:folderId/expense/:expenseId", requireAuth, async 
       return;
     }
 
-    expense.fidelityTransferDate = fidelityTransferDate;
-    expense.beneficiaryPaymentDate = beneficiaryPaymentDate;
-    await writeLedger(accessToken, folderId, ledger);
+    if (Object.hasOwn(req.body || {}, "draft")) {
+      if (JSON.stringify(req.body.expectedExpense) !== JSON.stringify(expense)) {
+        res.status(409).json({ error: "This expense changed since you opened it. Reload history before editing." });
+        return;
+      }
+      if (ledger.version === 1) {
+        res.status(409).json({ error: "Back up and migrate this ledger from Settings before editing expenses." });
+        return;
+      }
+      const draft = req.body.draft as CollegeExpenseDraft;
+      if (!validDraft(draft) || (draft.bankProvider !== undefined && typeof draft.bankProvider !== "string")) {
+        res.status(400).json({ error: "Complete all required expense fields and use valid dates and positive amounts." });
+        return;
+      }
+      const date = new Date(`${draft.date}T00:00:00Z`);
+      if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== draft.date) {
+        res.status(400).json({ error: "Expense date must be a valid calendar date." });
+        return;
+      }
+      const originalCurrency = draft.currency.trim().toUpperCase();
+      const originalAmount = Number(draft.amount);
+      const unchangedFredConversion = expense.conversion?.method === "fred" &&
+        draft.conversionMethod === "fred" && draft.date === expense.date &&
+        originalCurrency === expense.originalCurrency && originalAmount === expense.originalAmount;
+      let conversion: ConvertCollegeExpenseResponse;
+      try {
+        conversion = unchangedFredConversion
+          ? { usdAmount: expense.amount.toFixed(2), conversion: expense.conversion }
+          : await resolveDraftConversion(draft);
+      } catch (err: any) {
+        res.status(400).json({ error: err?.message || "Could not convert the expense to USD." });
+        return;
+      }
+      Object.assign(expense, {
+        date: draft.date,
+        merchant: draft.merchant.trim(),
+        amount: Number(conversion.usdAmount),
+        currency: "USD",
+        originalAmount,
+        originalCurrency,
+        conversion: conversion.conversion,
+        items: draft.items.map((item) => item.trim()).filter(Boolean),
+        description: draft.description.trim(),
+        fidelityTransferDate: draft.fidelityTransferDate || "",
+        beneficiaryPaymentDate: draft.beneficiaryPaymentDate || "",
+      });
+      delete expense.exchangeRate;
+    } else {
+      expense.fidelityTransferDate = fidelityTransferDate;
+      expense.beneficiaryPaymentDate = beneficiaryPaymentDate;
+    }
+    await writeLedger(accessToken, folderId, ledger, { id: ledgerFile.id, eTag: ledgerFile.eTag });
     const response: UpdateCollegeExpenseDatesResponse = { expense };
     res.json(response);
   } catch (err: any) {
-    console.error("529 expense date update error:", err);
-    res.status(500).json({ error: err?.message || "Could not update expense dates" });
+    console.error("529 expense update error:", err);
+    res.status(err.status || 500).json({ error: err?.message || "Could not update expense" });
+  }
+});
+
+/** Remove a single ledger entry; retain its receipt file in OneDrive. */
+router.delete("/api/529/ledger/:folderId/expense/:expenseId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { accessToken } = req as AuthenticatedRequest;
+    const folderId = Array.isArray(req.params.folderId) ? req.params.folderId[0] : req.params.folderId;
+    const expenseId = Array.isArray(req.params.expenseId) ? req.params.expenseId[0] : req.params.expenseId;
+    if (!req.body?.expectedExpense || req.body.expectedExpense.id !== expenseId) {
+      res.status(400).json({ error: "The expense being deleted is required. Reload history and try again." });
+      return;
+    }
+    await assertFolder(accessToken, folderId);
+    const ledgerFile = await getFolderChildByName(accessToken, folderId, LEDGER_NAME);
+    if (!ledgerFile?.id || !ledgerFile.eTag) {
+      res.status(409).json({ error: "Could not determine the ledger version. Reload history before deleting." });
+      return;
+    }
+    const ledger = await readLedger(accessToken, folderId);
+    const expense = ledger.expenses.find((item) => item.id === expenseId);
+    if (!expense) {
+      res.status(404).json({ error: "Expense not found" });
+      return;
+    }
+    if (JSON.stringify(req.body.expectedExpense) !== JSON.stringify(expense)) {
+      res.status(409).json({ error: "This expense changed since you loaded it. Reload history before deleting." });
+      return;
+    }
+    ledger.expenses = ledger.expenses.filter((item) => item.id !== expenseId);
+    await writeLedger(accessToken, folderId, ledger, { id: ledgerFile.id, eTag: ledgerFile.eTag });
+    res.json({ deletedId: expenseId });
+  } catch (err: any) {
+    console.error("529 expense delete error:", err);
+    res.status(err.status || 500).json({ error: err?.message || "Could not delete expense" });
   }
 });
 

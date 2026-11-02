@@ -6,6 +6,11 @@ export interface DriveItem {
   lastModifiedDateTime: string;
   folder?: { childCount: number };
   file?: { mimeType: string };
+  thumbnails?: {
+    small?: { url: string };
+    medium?: { url: string };
+    large?: { url: string };
+  }[];
   webUrl?: string;
   parentReference?: {
     driveId: string;
@@ -196,6 +201,23 @@ export interface UpdateCollegeExpenseDatesRequest {
 
 export interface UpdateCollegeExpenseDatesResponse {
   expense: CollegeExpense;
+}
+
+export interface UpdateCollegeExpenseRequest {
+  draft: CollegeExpenseDraft;
+  expectedExpense: CollegeExpense;
+}
+
+export interface UpdateCollegeExpenseResponse {
+  expense: CollegeExpense;
+}
+
+export interface DeleteCollegeExpenseRequest {
+  expectedExpense: CollegeExpense;
+}
+
+export interface DeleteCollegeExpenseResponse {
+  deletedId: string;
 }
 
 export interface BulkUpdateCollegeExpenseDatesRequest {

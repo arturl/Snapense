@@ -11,13 +11,23 @@ import {
   type ScanCollegeResponse,
 } from "@snapense/shared";
 import { api } from "../api/client";
+import { ImagePreview } from "./ImagePreview";
+import { CollegeExpenseEditor, isDraftComplete } from "./CollegeExpenseEditor";
 
 interface Breadcrumb { id: string | null; name: string }
+
+const fileDateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
+function formatFileDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unavailable" : fileDateFormatter.format(date);
+}
 
 export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePlan[]; onOpenSettings: () => void }) {
   const [planId, setPlanId] = useState(plans[0]?.id || "");
   const plan = plans.find((item) => item.id === planId) || plans[0];
   const [items, setItems] = useState<DriveItem[]>([]);
+  const [preview, setPreview] = useState<{ name: string; url: string } | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([{ id: null, name: "My files" }]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -146,12 +156,27 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
           <button style={{ ...primaryBtn, opacity: selected.size && !busy ? 1 : .5 }} disabled={!selected.size || busy} onClick={scan}>{busy && !drafts.length ? "Scanning…" : "Scan for 529"}</button>
         </div>
         {loading ? <div style={empty}>Loading…</div> : <div style={{ maxHeight: "55vh", overflow: "auto" }}>
-          {folders.map((item) => <button key={item.id} style={itemRow} onClick={() => setBreadcrumbs((all) => [...all, { id: item.id, name: item.name }])}><span style={{ color: "#54aeff" }}>●</span> {item.name}</button>)}
-          {files.map((item) => <label key={item.id} style={{ ...itemRow, background: selected.has(item.id) ? "#ddf4ff" : "#fff" }}>
-            <input type="checkbox" checked={selected.has(item.id)} onChange={() => setSelected((old) => { const next = new Set(old); next.has(item.id) ? next.delete(item.id) : next.add(item.id); return next; })} />
-            <span style={{ wordBreak: "break-word" }}>{item.name}</span>
-          </label>)}
-          {!items.length && <div style={empty}>This folder is empty.</div>}
+          <table aria-label="OneDrive files" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr>
+              <th scope="col" style={fileHeading}>File name</th>
+              <th scope="col" style={{ ...fileHeading, width: 130 }} title="Date created in OneDrive">Date</th>
+            </tr></thead>
+            <tbody>
+              {folders.map((item) => <tr key={item.id}>
+                <td style={fileCell}><button style={{ ...linkBtn, display: "flex", alignItems: "center", gap: 8, textAlign: "left", wordBreak: "break-word", fontSize: 13 }} onClick={() => setBreadcrumbs((all) => [...all, { id: item.id, name: item.name }])}><span style={{ color: "#54aeff" }} aria-hidden="true">●</span> {item.name}</button></td>
+                <td style={{ ...fileCell, color: "#656d76", whiteSpace: "nowrap" }}>{formatFileDate(item.createdDateTime)}</td>
+              </tr>)}
+              {files.map((item) => <tr key={item.id} style={{ background: selected.has(item.id) ? "#ddf4ff" : "#fff" }}>
+                <td style={fileCell}><div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input id={`receipt-file-${item.id}`} type="checkbox" checked={selected.has(item.id)} onChange={() => setSelected((old) => { const next = new Set(old); next.has(item.id) ? next.delete(item.id) : next.add(item.id); return next; })} />
+                  <FileThumbnail key={item.thumbnails?.[0]?.small?.url || item.id} item={item} onPreview={(url) => setPreview({ name: item.name, url })} />
+                  <label htmlFor={`receipt-file-${item.id}`} style={{ cursor: "pointer", wordBreak: "break-word" }}>{item.name}</label>
+                </div></td>
+                <td style={{ ...fileCell, color: "#656d76", whiteSpace: "nowrap" }}>{formatFileDate(item.createdDateTime)}</td>
+              </tr>)}
+              {!items.length && <tr><td colSpan={2} style={empty}>This folder is empty.</td></tr>}
+            </tbody>
+          </table>
         </div>}
       </div>
 
@@ -159,7 +184,7 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
         <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>Review before submission</h3>
         <p style={{ ...muted, margin: "0 0 14px" }}>Correct every field below. Nothing is saved until you submit.</p>
         {drafts.map((draft) => draft.status === "error" ? <div key={draft.id} style={errorBox}><strong>{draft.originalName}</strong>: {draft.error} <button style={smallLink} onClick={() => setDrafts((all) => all.filter((item) => item.id !== draft.id))}>Remove</button></div> :
-          <DraftEditor key={draft.id} draft={draft} converting={converting.has(draft.id)} onConvert={() => refreshConversion(draft)} onChange={(changes) => updateDraft(draft.id, changes)} onRemove={() => setDrafts((all) => all.filter((item) => item.id !== draft.id))} />)}
+          <CollegeExpenseEditor key={draft.id} draft={draft} converting={converting.has(draft.id)} onConvert={() => refreshConversion(draft)} onChange={(changes) => updateDraft(draft.id, changes)} onRemove={() => setDrafts((all) => all.filter((item) => item.id !== draft.id))} />)}
 
         {duplicates.length > 0 && <div style={{ borderTop: "2px solid #bf8700", paddingTop: 14, marginTop: 14 }}>
           <h3 style={{ margin: "0 0 6px", fontSize: 16 }}>Possible duplicates need a decision</h3>
@@ -186,90 +211,20 @@ export function CollegeExpenseFlow({ plans, onOpenSettings }: { plans: CollegePl
         </>}
       </div>}
     </div>
+    {preview && <ImagePreview name={preview.name} url={preview.url} onClose={() => setPreview(null)} />}
   </div>;
 }
 
-function DraftEditor({ draft, converting, onConvert, onChange, onRemove }: { draft: CollegeExpenseDraft; converting: boolean; onConvert: () => void; onChange: (changes: Partial<CollegeExpenseDraft>) => void; onRemove: () => void }) {
-  const extension = draft.originalName.includes(".") ? draft.originalName.slice(draft.originalName.lastIndexOf(".")) : "";
-  const proposed = formatCollegeExpenseFilename(draft) + extension;
-  const missingDate = !/^\d{4}-\d{2}-\d{2}$/.test(draft.date);
-  const missingMerchant = !draft.merchant.trim();
-  const missingAmount = !Number.isFinite(Number(draft.amount)) || Number(draft.amount) <= 0;
-  const missingCurrency = !/^[A-Za-z]{3}$/.test(draft.currency.trim());
-  const missingItems = !draft.items.some((item) => item.trim());
-  const missingDescription = !draft.description.trim();
-  return <div style={draftBox}>
-    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}><strong style={{ fontSize: 13 }}>{draft.originalName}</strong><span style={{ flex: 1 }} /><button style={smallLink} onClick={onRemove}>Remove</button></div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 110px 80px", gap: 9 }}>
-      <Field label="Date"><input required type="date" style={fieldStyle(missingDate)} value={draft.date} onChange={(event) => onChange({ date: event.target.value })} /></Field>
-      <Field label="Merchant"><input required style={fieldStyle(missingMerchant)} value={draft.merchant} onChange={(event) => onChange({ merchant: event.target.value })} /></Field>
-      <Field label="Amount"><input required min="0.01" step="0.01" type="number" style={fieldStyle(missingAmount)} value={draft.amount} onChange={(event) => onChange({ amount: event.target.value })} /></Field>
-      <Field label="Currency"><input required maxLength={3} style={fieldStyle(missingCurrency)} value={draft.currency} onChange={(event) => {
-        const currency = event.target.value.toUpperCase();
-        onChange({
-          currency,
-          conversionMethod: currency === "USD" ? "none" : draft.conversionMethod === "none" ? "fred" : draft.conversionMethod,
-        });
-      }} /></Field>
-    </div>
-    <Field label="Items purchased (comma-separated)"><input style={fieldStyle(missingItems)} value={draft.items.join(", ")} onChange={(event) => onChange({ items: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></Field>
-    <Field label="Description"><input required style={fieldStyle(missingDescription)} value={draft.description} onChange={(event) => onChange({ description: event.target.value })} /></Field>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
-      <Field label="Money moved from Fidelity (optional)"><input type="date" style={input} value={draft.fidelityTransferDate || ""} onChange={(event) => onChange({ fidelityTransferDate: event.target.value })} /></Field>
-      <Field label="Money paid to beneficiary (optional)"><input type="date" style={input} value={draft.beneficiaryPaymentDate || ""} onChange={(event) => onChange({ beneficiaryPaymentDate: event.target.value })} /></Field>
-    </div>
-    {draft.currency.toUpperCase() !== "USD" && <Field label="USD conversion method">
-      <select style={input} value={draft.conversionMethod === "bank" ? "bank" : "fred"} onChange={(event) => onChange({ conversionMethod: event.target.value as "fred" | "bank" })}>
-        <option value="fred">FRED reference rate</option>
-        <option value="bank">Actual USD paid by bank/card</option>
-      </select>
-    </Field>}
-    {draft.conversionMethod === "bank" && draft.currency.toUpperCase() !== "USD" ? <div style={conversionBox}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 9, width: "100%" }}>
-        <Field label="Actual USD charged"><input required min="0.01" step="0.01" type="number" style={fieldStyle(!Number.isFinite(Number(draft.usdAmount)) || Number(draft.usdAmount) <= 0)} value={draft.usdAmount || ""} onChange={(event) => onChange({ usdAmount: event.target.value, conversion: undefined, conversionError: undefined })} /></Field>
-        <Field label="Bank/card provider (optional)"><input style={input} value={draft.bankProvider || ""} placeholder="e.g. Chase Visa" onChange={(event) => onChange({ bankProvider: event.target.value })} /></Field>
-        <Field label="Posting date (optional)"><input type="date" style={input} value={draft.bankEffectiveDate || ""} onChange={(event) => onChange({ bankEffectiveDate: event.target.value })} /></Field>
-        {draft.usdAmount && Number(draft.amount) > 0 && <div style={{ ...muted, gridColumn: "1 / -1" }}>Implied rate: {(Number(draft.usdAmount) / Number(draft.amount)).toFixed(8)} USD/{draft.currency.toUpperCase()}. The actual USD amount will be stored as the ledger amount.</div>}
-      </div>
-    </div> : <div style={conversionBox}>
-      <div>
-        <strong>USD ledger amount</strong><br />
-        {draft.usdAmount ? <>
-          <span style={{ fontSize: 16 }}>${Number(draft.usdAmount).toFixed(2)} USD</span>
-          {draft.conversion?.method === "fred" && <div style={{ ...muted, marginTop: 3 }}>
-            {Number(draft.amount).toFixed(2)} {draft.currency.toUpperCase()} × {draft.conversion.rate} USD/{draft.currency.toUpperCase()} · FRED {draft.conversion.seriesId}, observation {draft.conversion.effectiveDate} · <a href={draft.conversion.sourceUrl} target="_blank" rel="noreferrer">source</a>
-          </div>}
-          {!draft.conversion && <div style={{ ...muted, marginTop: 3 }}>No conversion needed for a USD receipt.</div>}
-        </> : <span style={{ color: draft.conversionError ? "#a40e26" : "#9a6700", fontSize: 12 }}>{draft.conversionError || "Refresh the conversion after editing the date, amount, or currency."}</span>}
-      </div>
-      <button type="button" style={{ ...secondaryBtn, whiteSpace: "nowrap" }} disabled={converting || missingDate || missingAmount || missingCurrency} onClick={onConvert}>{converting ? "Converting…" : "Refresh USD conversion"}</button>
-    </div>}
-    <div style={{ fontSize: 11, color: "#656d76", wordBreak: "break-all" }}>Saved filename: {proposed}</div>
-  </div>;
+function FileThumbnail({ item, onPreview }: { item: DriveItem; onPreview: (url: string) => void }) {
+  const [failed, setFailed] = useState(false);
+  const thumbnails = item.thumbnails?.[0];
+  const url = thumbnails?.small?.url || thumbnails?.medium?.url || thumbnails?.large?.url;
+  if (!item.file?.mimeType.startsWith("image/") || !url || failed) return null;
+  return <button type="button" aria-label={`Preview ${item.name}`} title="Click to enlarge" onClick={() => onPreview(thumbnails?.large?.url || thumbnails?.medium?.url || url)}
+    style={{ padding: 0, width: 44, height: 44, flexShrink: 0, border: "1px solid #d1d9e0", borderRadius: 4, background: "#f6f8fa", cursor: "zoom-in", overflow: "hidden" }}>
+    <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+  </button>;
 }
-
-function isDraftComplete(draft: CollegeExpenseDraft): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(draft.date) && Boolean(
-    draft.merchant.trim() && draft.description.trim() &&
-    /^[A-Za-z]{3}$/.test(draft.currency.trim()) &&
-    draft.items.some((item) => item.trim()) &&
-    Number.isFinite(Number(draft.amount)) && Number(draft.amount) > 0 &&
-    Number.isFinite(Number(draft.usdAmount)) && Number(draft.usdAmount) > 0
-  );
-}
-
-function fieldStyle(invalid: boolean): React.CSSProperties {
-  return invalid ? { ...input, borderColor: "#d4a72c", background: "#fff8c5" } : input;
-}
-
-function formatCollegeExpenseFilename(draft: CollegeExpenseDraft): string {
-  const clean = (value: string) => value.trim().replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "") || "unknown";
-  const parsedAmount = Number(draft.amount);
-  const amount = (Number.isFinite(parsedAmount) ? parsedAmount.toFixed(2) : "0.00").replace(".", "-");
-  return `${draft.date}-${clean(draft.merchant).slice(0, 60)}-${clean(draft.description).slice(0, 120)}-${amount}-${clean(draft.currency || "USD")}`;
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, color: "#656d76", fontWeight: 600, marginBottom: 9 }}>{label}{children}</label>; }
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid #d1d9e0", borderRadius: 6, padding: 16 };
 const muted: React.CSSProperties = { color: "#656d76", fontSize: 12 };
@@ -279,10 +234,9 @@ const primaryBtn: React.CSSProperties = { padding: "7px 14px", border: "1px soli
 const secondaryBtn: React.CSSProperties = { padding: "6px 10px", border: "1px solid #d1d9e0", borderRadius: 6, background: "#f6f8fa", color: "#1f2328", cursor: "pointer", fontSize: 12 };
 const linkBtn: React.CSSProperties = { border: 0, background: "none", padding: 0, color: "#0969da", cursor: "pointer" };
 const smallLink: React.CSSProperties = { ...linkBtn, fontSize: 12, color: "#cf222e" };
-const itemRow: React.CSSProperties = { boxSizing: "border-box", display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 6px", border: 0, borderTop: "1px solid #eaeef2", textAlign: "left", background: "#fff", color: "#1f2328", cursor: "pointer", fontSize: 13 };
+const fileHeading: React.CSSProperties = { padding: "8px 6px", textAlign: "left", color: "#656d76", fontWeight: 600, borderBottom: "1px solid #d1d9e0", position: "sticky", top: 0, background: "#fff" };
+const fileCell: React.CSSProperties = { padding: "9px 6px", borderBottom: "1px solid #eaeef2", color: "#1f2328" };
 const empty: React.CSSProperties = { padding: 24, textAlign: "center", color: "#656d76", fontSize: 13 };
 const errorBox: React.CSSProperties = { background: "#ffebe9", border: "1px solid #ffcecb", color: "#a40e26", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 };
 const successBox: React.CSSProperties = { background: "#dafbe1", border: "1px solid #aceebb", color: "#116329", padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 };
-const draftBox: React.CSSProperties = { border: "1px solid #d1d9e0", background: "#f6f8fa", padding: 12, borderRadius: 6, marginBottom: 10 };
-const conversionBox: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, border: "1px solid #b6d7a8", background: "#f0fff4", padding: 10, borderRadius: 6, marginBottom: 9 };
 const duplicateBox: React.CSSProperties = { border: "1px solid #d4a72c", background: "#fff8c5", padding: 12, borderRadius: 6, marginBottom: 10 };
